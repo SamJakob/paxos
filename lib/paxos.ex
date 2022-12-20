@@ -78,12 +78,14 @@ defmodule Paxos do
   instance_number.
   """
   def propose(delegate, instance_number, value, timeout) do
-    rpc_paxos(
+    {_, _, _, _, result} = rpc_paxos(
       # Deliver, to delegate, the following message:
       delegate, {__MODULE__, :propose, instance_number, self(), {value, timeout}},
       # After timeout, return the default of :timeout.
       timeout
     )
+
+    result
   end
 
   @doc """
@@ -91,12 +93,14 @@ defmodule Paxos do
   if there was one. Otherwise, returns nil. Also returns nil on timeout.
   """
   def get_decision(delegate, instance_number, timeout) do
-    rpc_paxos(
+    {_, _, _, _, result} = rpc_paxos(
       # Deliver, to delegate, the following message:
       delegate, {__MODULE__, :get_decision, instance_number, self(), {timeout}},
       # After timeout, return nil.
       timeout, nil
     )
+
+    result
   end
 
   # -----------------------
