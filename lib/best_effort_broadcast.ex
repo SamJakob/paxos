@@ -127,6 +127,7 @@ defmodule BestEffortBroadcast do
   # used. Implemented modes are as follows:
   #   :nominal (do not introduce additional behavior)
   #   :reordered (randomize the order and delay after which messages are delivered)
+  @spec debug_change_broadcast_type(atom | pid | port | reference | {atom, atom}, any) :: any
   def debug_change_broadcast_type(pid, type \\ :nominal) do
     send(pid, {__MODULE__, :debug_set_broadcast_type, type})
   end
