@@ -1,8 +1,11 @@
 {
     "cSpell.words": [
         "Abortable",
+        "HMAC",
         "Lamport",
+        "MITM",
         "paxos",
+        "typedstruct",
         "unicasts",
         "whereis"
     ]

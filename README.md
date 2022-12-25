@@ -3,6 +3,8 @@
 An Abortable Παξος Implementation for Consensus based on Leslie Lamport's
 paper, "Paxos Made Simple".
 
+Requires OTP >= 23.
+
 ## Running with IEx
 Simply use:
 ```bash

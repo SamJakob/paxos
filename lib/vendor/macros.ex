@@ -11,4 +11,17 @@ defmodule Macros do
       and unquote(__MODULE__).matching_tuple_values(unquote(n - 1), unquote(a), unquote(b))
     )
   end
+
+  defmacro pack_message(
+    command,
+    payload,
+    other_arguments \\ (quote do (%{reply_to: nil}) end)
+  ) do
+    quote do: (Map.merge(%{
+      protocol: __MODULE__,
+      command: unquote(command),
+      instance_number: var!(instance_number),
+      payload: unquote(payload)
+    }, unquote(other_arguments)))
+  end
 end
