@@ -89,8 +89,8 @@ defmodule Crypto do
 
     # Parse and solve the challenge.
     parts = String.split(value, "/", trim: true)
-    numerator = String.to_integer(parts[0])
-    denominator = String.to_integer(parts[1])
+    numerator = String.to_integer(Enum.at(parts, 0))
+    denominator = String.to_integer(Enum.at(parts, 1))
     solution_attempt = div(numerator, denominator)
 
     # Then encrypt the result.

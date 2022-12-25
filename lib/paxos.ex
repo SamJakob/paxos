@@ -27,8 +27,10 @@ defmodule Paxos do
 
     # A map of instance number to a proposal made for that instance number.
     # This will only hold that value if the proposal was made to this process
+    # and thus this process created a ballot for it - at this time, it is
+    # anticipated that any given process will only handle one ballot at once.
     # (i.e., if this process is the leader.)
-    field :proposals,
+    field :ballots,
       %{required(integer()) => %{
         :proposer => pid(),
         :value => any()
@@ -147,7 +149,7 @@ defmodule Paxos do
         participants: participants
       }
 
-      Logger.info("Ready! Listening as #{name} (#{inspect(self())}).")
+      Logger.notice("Ready! Listening as #{name} (#{inspect(self())}).")
       send(spawner, :raw_signal_startup_complete)
       run(state)
     end
@@ -158,19 +160,21 @@ defmodule Paxos do
   instance_number.
   """
   def propose(delegate, instance_number, value, timeout) do
-    rpc_paxos(
+    result = rpc_paxos(
       # Deliver, to delegate, the following message:
       delegate, Message.pack(:propose, {value}, %{reply_to: self()}),
       # After timeout, return the default of :timeout.
       timeout
     )
+
+    Logger.flush()
+    result
   end
 
   @doc """
   Returns the value decided by the consensus associated with instance_number,
   if there was one. Otherwise, returns nil. Also returns nil on timeout.
   """
-
   def get_decision(delegate, instance_number, timeout) do
     rpc_paxos(
       # Deliver, to delegate...
@@ -273,12 +277,12 @@ defmodule Paxos do
       )
     )
 
-    # Add this proposal to the list of proposals this leader is currently
+    # Add this proposal to the list of ballots this leader is currently
     # working on.
-    %{state
-      | proposals: Map.put(
-        state.proposals, instance_number,
-        %{proposer: reply_to, value: value, proposer_metadata: metadata}
+    state = %{state
+      | ballots: Map.put(
+        state.ballots, instance_number,
+        %{proposer: reply_to, value: value, metadata: metadata}
       )
     }
 
@@ -320,28 +324,44 @@ defmodule Paxos do
     end
   end
 
-  defp paxos_prepared(state, instance_number, %{ballot: ballot}) do
-    with proposal <- Map.get(state.proposals, instance_number) do
+  defp paxos_prepared(state, instance_number, %{accepted: _, ballot: ballot_number}) do
+    with ballot when ballot != nil <- Map.get(state.ballots, instance_number) do
+
+      # TODO: implement this.
+      # return NACK for testing purposes.
+      send(self(), Message.pack(:nack, %{ballot: ballot}))
+
       # If quorum reached, broadcast accept.
 
       # Else, store ballot and do nothing.
     else
-      _ -> {:error, "The requested proposal could not be found. This process probably isn't the leader for this instance."}
+      _ ->
+        # This response is returned for future use, but currently will just be
+        # thrown away. This is fine, we can safely disregard them - it's likely
+        # that we aborted the ballot and other processes are catching up.
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
     end
+
+    :skip_reply
   end
 
-  defp paxos_nack(state, instance_number, %{ballot: ballot}) do
-    # If the instance_number is in the list of proposals we're currently
+  defp paxos_nack(state, instance_number, %{ballot: _}) do
+    # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
-    state = if Map.has_key?(state.proposals, instance_number) do
-      proposal = state.proposals[instance_number]
-      %{state | proposals: Map.delete(state.proposals, instance_number)}
+    state = if Map.has_key?(state.ballots, instance_number) do
+      proposal = state.ballots[instance_number]
+      state = %{state | ballots: Map.delete(state.ballots, instance_number)}
 
       # Return abort by replying to the client's propose message.
       send(
         proposal.proposer,
-        Message.pack_encrypted(:propose, {:abort}, proposal.metadata)
+        Message.pack_encrypted(:propose, {:abort}, %{
+          key: state.keys[proposal.metadata.key],
+          challenge: proposal.metadata.challenge
+        })
       )
+
+      state
     end
 
     %{result: :skip_reply, state: state}
@@ -434,13 +454,17 @@ defmodule Paxos do
           # These are commands sent to other processes as part of the Paxos
           # processes (usually broadcasted).
           :prepare -> paxos_prepare(state, instance_number, reply_to, payload)
+          :prepared -> paxos_prepared(state, instance_number, payload)
+          :nack -> paxos_nack(state, instance_number, payload)
 
           # Fallback Handler
           # ----------------
           # If the command is unknown, this prevents a crash and instead
           # replies with a message indicating that the requested command was
           # unknown.
-          _ -> {:error, "Bad/unknown command specified."}
+          _ ->
+            Logger.warn("Received bad/unknown command, #{inspect command}.")
+            {:error, "Bad/unknown command specified."}
         end
 
         # If a map containing just result and state is returned, interpret
@@ -579,6 +603,10 @@ defmodule Paxos do
             state
         end
       # End General Commands.
+
+      error_message when is_tuple(error_message) and elem(error_message, 0) == :error ->
+        Logger.warn("Received error message.", [data: error_message])
+        state
     end
 
   end
@@ -636,7 +664,7 @@ defmodule Paxos do
         %{
           message: reply,
           challenge_response: challenge_response
-        } = Crypto.decrypt(key, :erlang.binary_to_term(encoded))
+        } = :erlang.binary_to_term(Crypto.decrypt(key, encoded))
 
         # The key is no longer needed, it can be deleted from the Paxos
         # delegate.

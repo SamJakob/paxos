@@ -5,6 +5,11 @@ paper, "Paxos Made Simple".
 
 Requires OTP >= 23.
 
+## Notes
+- For debugging/presentation purposes, `Logger.flush()` has been included
+frequently (for coherent log presentation). These MUST be removed before
+production - particularly if the Console backend is not to be used!
+
 ## Running with IEx
 Simply use:
 ```bash
