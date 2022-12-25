@@ -6,7 +6,7 @@ defmodule Paxos do
   """
 
   use TypedStruct
-  require Macros
+  require Message
   require Logger
 
   # State for the current module.
@@ -160,7 +160,7 @@ defmodule Paxos do
   def propose(delegate, instance_number, value, timeout) do
     rpc_paxos(
       # Deliver, to delegate, the following message:
-      delegate, Macros.pack_message(:propose, {value}, %{reply_to: self()}),
+      delegate, Message.pack(:propose, {value}, %{reply_to: self()}),
       # After timeout, return the default of :timeout.
       timeout
     )
@@ -176,7 +176,7 @@ defmodule Paxos do
       # Deliver, to delegate...
       delegate,
       # the following message:
-      Macros.pack_message(:get_decision, {timeout}, %{reply_to: self()}),
+      Message.pack(:get_decision, {timeout}, %{reply_to: self()}),
       # After timeout, return nil.
       timeout, nil
     )
@@ -254,11 +254,12 @@ defmodule Paxos do
   # ---------------------------------------------------------------------------
 
   # Paxos.propose - Step 1 of 1 - Leader
+  # Create a new ballot, b.
   # Broadcast (prepare, b) to all processes.
-  defp paxos_propose(state, instance_number, reply_to, {value}) do
+  defp paxos_propose(state, instance_number, reply_to, {value}, metadata) do
     BestEffortBroadcast.broadcast(
       state.participants,
-      Macros.pack_message(
+      Message.pack(
         # -- Command
         :prepare,
 
@@ -277,7 +278,7 @@ defmodule Paxos do
     %{state
       | proposals: Map.put(
         state.proposals, instance_number,
-        %{proposer: reply_to, value: value}
+        %{proposer: reply_to, value: value, proposer_metadata: metadata}
       )
     }
 
@@ -302,7 +303,7 @@ defmodule Paxos do
       # able to re-prepare that ballot, so incrementing current_ballot here
       # is fine - if we are the leader, that logic is handled elsewhere, in the
       # other stages, anyway).
-      send(reply_to, Macros.pack_message(:prepared, %{
+      send(reply_to, Message.pack(:prepared, %{
         ballot: ballot,
         accepted: state.accepted,
       }))
@@ -314,7 +315,7 @@ defmodule Paxos do
       # If we've already processed this ballot, or a ballot after this one, we
       # must not accept it and instead indicate that we've rejected it (i.e.,
       # not acknowledged, nack).
-      send(reply_to, Macros.pack_message(:nack, %{ballot: ballot}))
+      send(reply_to, Message.pack(:nack, %{ballot: ballot}))
       %{result: :skip_reply, state: state}
     end
   end
@@ -333,10 +334,14 @@ defmodule Paxos do
     # If the instance_number is in the list of proposals we're currently
     # processing, then remove it and abort.
     state = if Map.has_key?(state.proposals, instance_number) do
+      proposal = state.proposals[instance_number]
       %{state | proposals: Map.delete(state.proposals, instance_number)}
 
-      # Return abort by replying to our own prepare message.
-
+      # Return abort by replying to the client's propose message.
+      send(
+        proposal.proposer,
+        Message.pack_encrypted(:propose, {:abort}, proposal.metadata)
+      )
     end
 
     %{result: :skip_reply, state: state}
@@ -372,9 +377,10 @@ defmodule Paxos do
           Crypto.decrypt(state.keys[key_id], encrypted_payload)
         )
 
-        # Inject the challenge into the message as part of the metadata.
+        # Inject the key ID and challenge into the message as part of the
+        # metadata.
         message = Map.merge(%{metadata: %{}}, message)
-        %{message | metadata: Map.merge(message.metadata, %{challenge: challenge})}
+        %{message | metadata: Map.merge(message.metadata, %{key: key_id, challenge: challenge})}
 
       # In any case, if the message is a map, inject the metadata property.
       _ -> if is_map(message), do: Map.merge(%{metadata: %{}}, message), else: message
@@ -420,7 +426,7 @@ defmodule Paxos do
           # A client process outside of the Paxos implementation issues these
           # requests to a Paxos delegate process (participant) with
           # Paxos.propose/4 or Paxos.get_decision/3, etc.,
-          :propose -> paxos_propose(state, instance_number, reply_to, payload)
+          :propose -> paxos_propose(state, instance_number, reply_to, payload, metadata)
           :get_decision -> paxos_get_decision(state, instance_number, reply_to, payload)
 
           # Broadcast Commands (generally broadcasted)
@@ -454,7 +460,7 @@ defmodule Paxos do
         # again with the Paxos implementation protocol.
         if reply_to != nil and result != :skip_reply, do: send(
           reply_to,
-          Macros.pack_message(command, result, %{reply_to: reply_to})
+          Message.pack(command, result)
         )
 
         # Finally, respond with the state.
@@ -641,6 +647,7 @@ defmodule Paxos do
           reply.protocol == message.protocol and
           reply.command == message.command and
           reply.instance_number == message.instance_number and
+          reply.reply_to == nil and
           # Verify challenge-response.
           Crypto.verify_challenge_response(key, challenge_response, solution)) do
             # If the reply checks out, return the payload.
