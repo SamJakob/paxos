@@ -12,13 +12,20 @@ production - particularly if the Console backend is not to be used!
 
 ## Running with IEx
 Simply use:
-```bash
+```batch
 iex -S mix
+```
+
+```batch
+iex.bat -S "mix" "run" "example_commands.exs"
 ```
 
 (or, alternatively, on Windows Powershell):
 ```powershell
 iex.bat -S mix
+
+# (or)
+iex.bat -S "mix" "run" "example_commands.exs"
 ```
 
 ## Installation

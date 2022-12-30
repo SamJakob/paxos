@@ -18,20 +18,27 @@ defmodule Paxos do
     field :name, atom()
     field :participants, list(atom())
 
-    field :current_ballot, integer(), default: 0
+    field :current_ballot,
+      %{required(integer()) => integer()},
+      default: %{}
 
     # The previously accepted ballot. Initially the ballot number is 0 which
     # means accept whatever the current proposal is (hence the previously
     # accepted ballot value, here, is nil by default.)
-    field :accepted, {integer(), any()}, default: {0, nil}
+    field :accepted,
+      # instance_number => {ballot_number, ballot_value}
+      %{required(integer()) => {integer(), any()}},
+      default: %{}
 
-    # A map of instance number to a proposal made for that instance number.
+    # A map of instance number and ballot number to the data held for some
+    # ballot.
     # This will only hold that value if the proposal was made to this process
     # and thus this process created a ballot for it - at this time, it is
     # anticipated that any given process will only handle one ballot at once.
     # (i.e., if this process is the leader.)
     field :ballots,
-      %{required(integer()) => %{
+      # {instance_number, ballot_number} => ...
+      %{required({integer(), integer()}) => %{
         :proposer => pid(),
         :value => any()
       }},
@@ -257,10 +264,18 @@ defmodule Paxos do
 
   # ---------------------------------------------------------------------------
 
-  # Paxos.propose - Step 1 of 1 - Leader
+  # Paxos.propose - Step 1 - Leader -> All Processes
   # Create a new ballot, b.
   # Broadcast (prepare, b) to all processes.
   defp paxos_propose(state, instance_number, reply_to, {value}, metadata) do
+    # If the current_ballot number for this instance does not exist, initialize
+    # it to 0.
+    state = %{state |
+      current_ballot: Map.put_new(state.current_ballot, instance_number, 0)}
+
+    # Fetch and increment the current ballot number for this instance.
+    current_ballot = Map.fetch!(state.current_ballot, instance_number) + 1
+
     BestEffortBroadcast.broadcast(
       state.participants,
       Message.pack(
@@ -269,7 +284,7 @@ defmodule Paxos do
 
         # -- Data
         # We prepare the next ballot (after the current one) for voting on.
-        %{ballot: state.current_ballot + 1, value: value},
+        %{ballot: current_ballot, value: value},
 
         # -- Additional Options
         # Send replies to :prepare to the Paxos delegate - not the client.
@@ -281,7 +296,7 @@ defmodule Paxos do
     # working on.
     state = %{state
       | ballots: Map.put(
-        state.ballots, instance_number,
+        state.ballots, {instance_number, current_ballot},
         %{proposer: reply_to, value: value, metadata: metadata}
       )
     }
@@ -294,7 +309,7 @@ defmodule Paxos do
     %{result: :skip_reply, state: state}
   end
 
-  # Paxos.propose - Step 2 of 2 - All Processes
+  # Paxos.propose - Step 2 - All Processes -> Leader
   # Check if the incoming ballot is greater than the current one. If it is,
   # send :prepared to reply_to.
   # Otherwise, send :nack.
@@ -311,9 +326,10 @@ defmodule Paxos do
         ballot: ballot,
         accepted: state.accepted,
       }))
+
       %{
         result: :skip_reply,
-        state: %{state | current_ballot: state.current_ballot + 1}
+        state: %{state | current_ballot: Map.put(state.current_ballot, instance_number, ballot)}
       }
     else
       # If we've already processed this ballot, or a ballot after this one, we
@@ -324,6 +340,10 @@ defmodule Paxos do
     end
   end
 
+  # Paxos.propose - Step 3 - Leader -> All Processes
+  # Check if the incoming ballot is greater than the current one. If it is,
+  # send :prepared to reply_to.
+  # Otherwise, send :nack.
   defp paxos_prepared(state, instance_number, %{accepted: _, ballot: ballot_number}) do
     with ballot when ballot != nil <- Map.get(state.ballots, instance_number) do
 
@@ -332,6 +352,7 @@ defmodule Paxos do
       send(self(), Message.pack(:nack, %{ballot: ballot}))
 
       # If quorum reached, broadcast accept.
+      # if is_quorum(/* accepted */, )
 
       # Else, store ballot and do nothing.
     else
@@ -345,12 +366,12 @@ defmodule Paxos do
     :skip_reply
   end
 
-  defp paxos_nack(state, instance_number, %{ballot: _}) do
+  defp paxos_nack(state, instance_number, %{ballot: ballot_number}) do
     # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
-    state = if Map.has_key?(state.ballots, instance_number) do
-      proposal = state.ballots[instance_number]
-      state = %{state | ballots: Map.delete(state.ballots, instance_number)}
+    state = if Map.has_key?(state.ballots, {instance_number, ballot_number}) do
+      proposal = state.ballots[{instance_number, ballot_number}]
+      state = %{state | ballots: Map.delete(state.ballots, {instance_number, ballot_number})}
 
       # Return abort by replying to the client's propose message.
       send(
@@ -689,6 +710,9 @@ defmodule Paxos do
     after timeout -> value_on_timeout
     end
   end
+
+  defp is_quorum(number_of_elements, total),
+    do: number_of_elements >= div(total, 2) + 1
 
   # ---------------------------------------------------------------------------
 
