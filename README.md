@@ -16,7 +16,7 @@ Simply use:
 iex -S mix
 
 # (or)
-iex.bat -S "mix" "run" "example_commands.exs"
+iex -S "mix" "run" "example_commands.exs"
 ```
 
 (or, alternatively, on Windows Powershell):
