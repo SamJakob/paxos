@@ -588,16 +588,23 @@ defmodule Paxos do
   # Returns the decision that was arrived at for the specified instance_number.
   defp paxos_get_decision(state, instance_number, reply_to, {instance_number}, metadata) do
     result = if Map.has_key?(state.concluded_ballots, instance_number) do
-      # Get the latest ballot for a given instance, that has been accepted.
-      latest_accepted_ballot = Map.filter(
+      # Search for accepted ballots for this instance.
+      accepted_ballots = Map.filter(
         state.concluded_ballots[instance_number],
         fn {_, v} -> elem(v, 0) == :accepted end
       )
-      |> Map.keys
-      |> Enum.max
 
-      # Get the value for the latest_accepted_ballot.
-      elem(state.concluded_ballots[instance_number][latest_accepted_ballot], 1)
+      # If there are accepted ballots, return the latest one. Otherwise, return
+      # nil.
+      if Enum.count(accepted_ballots) > 0 do
+        # Get the latest ballot for a given instance, that has been accepted.
+        latest_accepted_ballot = accepted_ballots
+        |> Map.keys
+        |> Enum.max
+
+        # Get the value for the latest_accepted_ballot.
+        elem(state.concluded_ballots[instance_number][latest_accepted_ballot], 1)
+      end
     else
       nil
     end
