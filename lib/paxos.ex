@@ -59,16 +59,6 @@ defmodule Paxos do
       }},
       default: %{}
 
-    field :concluded_ballots,
-      # instance_number =>
-      %{required(integer()) => %{
-        # ballot_number =>
-        required(integer()) =>
-          # ballot_result
-          {:accepted, any()} | {:aborted}
-      }},
-      default: %{}
-
     # Used to store encryption keys for RPC calls.
     field :keys, %{required(String.t()) => any()}, default: %{}
   end
@@ -454,20 +444,11 @@ defmodule Paxos do
   }) do
     if ballot >= state.current_ballot[instance_number] do
 
-      # Initialize concluded_ballots for this instance, if it has not already
-      # been initialized.
-      state = %{state |
-        concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
-
       # Mark the ballot as accepted and update the current ballot number to
-      # reflect the last ballot we've processed. Then, update concluded_ballots
-      # to reflect the status of this ballot.
+      # reflect the last ballot we've processed.
       state = %{state |
         current_ballot: Map.put(state.current_ballot, instance_number, ballot),
-        accepted: {ballot, value},
-        concluded_ballots: %{state.concluded_ballots |
-          instance_number => Map.put(state.concluded_ballots[instance_number], ballot, {:accepted, value})
-        }
+        accepted: Map.put(state.accepted, instance_number, {ballot, value}),
       }
 
       # Now send :accepted to indicate we've done so.
@@ -506,18 +487,9 @@ defmodule Paxos do
       ) do
         # We've reached a quorum of :accepted! Yay! Consensus achieved.
 
-        # Initialize concluded_ballots for this instance, if it has not already
-        # been initialized.
-        state = %{state |
-          concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
-
-        # Delete the ballot from state. It's no longer needed. Also update
-        # concluded_ballots to reflect the result of this ballot.
+        # Delete the ballot from state. It's no longer needed.
         state = %{state
-          | ballots: Map.delete(state.ballots, {instance_number, ballot_number}),
-            concluded_ballots: %{state.concluded_ballots |
-              instance_number => Map.put(state.concluded_ballots[instance_number], ballot_number, {:aborted})
-            }
+          | ballots: Map.delete(state.ballots, {instance_number, ballot_number})
         }
 
         # Return decision by replying to the client's propose message.
@@ -551,17 +523,9 @@ defmodule Paxos do
     # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
     state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
-      # Initialize concluded_ballots for this instance, if it has not already
-      # been initialized.
-      state = %{state |
-        concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
-
       # Update the state to show the status of this ballot.
       state = %{state |
-        ballots: Map.delete(state.ballots, {instance_number, ballot_number}),
-        concluded_ballots: %{state.concluded_ballots |
-          instance_number => Map.put(state.concluded_ballots[instance_number], ballot_number, {:aborted})
-        }
+        ballots: Map.delete(state.ballots, {instance_number, ballot_number})
       }
 
       # Return abort by replying to the client's propose message.
@@ -587,24 +551,14 @@ defmodule Paxos do
   # Paxos.get_decision - Step 1 of 1
   # Returns the decision that was arrived at for the specified instance_number.
   defp paxos_get_decision(state, instance_number, reply_to, {instance_number}, metadata) do
-    result = if Map.has_key?(state.concluded_ballots, instance_number) do
-      # Search for accepted ballots for this instance.
-      accepted_ballots = Map.filter(
-        state.concluded_ballots[instance_number],
-        fn {_, v} -> elem(v, 0) == :accepted end
-      )
+    # Check if there is an accepted value for that instance_number, and check
+    # that the ballot number is greater than zero.
+    result = if Map.has_key?(state.accepted, instance_number)
+      and elem(state.accepted[instance_number], 0) > 0 do
 
-      # If there are accepted ballots, return the latest one. Otherwise, return
-      # nil.
-      if Enum.count(accepted_ballots) > 0 do
-        # Get the latest ballot for a given instance, that has been accepted.
-        latest_accepted_ballot = accepted_ballots
-        |> Map.keys
-        |> Enum.max
+      # Return the latest accepted value for that instance_number.
+      elem(state.accepted[instance_number], 1)
 
-        # Get the value for the latest_accepted_ballot.
-        elem(state.concluded_ballots[instance_number][latest_accepted_ballot], 1)
-      end
     else
       nil
     end
