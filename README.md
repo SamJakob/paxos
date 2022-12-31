@@ -12,11 +12,10 @@ production - particularly if the Console backend is not to be used!
 
 ## Running with IEx
 Simply use:
-```batch
+```bash
 iex -S mix
-```
 
-```batch
+# (or)
 iex.bat -S "mix" "run" "example_commands.exs"
 ```
 
