@@ -3,6 +3,14 @@ defmodule Crypto do
   @magicAuthenticationPayload "AB"
 
   @doc """
+  Generates a unique base-64 value of the requested length in bytes
+  (default = 64).
+  """
+  def unique_value(length \\ 64) do
+    Base.encode64(:crypto.strong_rand_bytes(length))
+  end
+
+  @doc """
   Generates an AES-256 key.
   """
   def generate_key() do

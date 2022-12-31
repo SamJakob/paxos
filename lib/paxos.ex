@@ -40,7 +40,32 @@ defmodule Paxos do
       # {instance_number, ballot_number} => ...
       %{required({integer(), integer()}) => %{
         :proposer => pid(),
-        :value => any()
+        :value => any(),
+
+        # Additional data stored by the application for a ballot it controls.
+        :metadata => any(),
+
+        # The list of processes that have prepared or accepted this ballot. It
+        # is important that this uses the atom and not the PID, as storing both
+        # - or just PIDs - might enable duplicate or invalid processes. Using
+        # atoms is easily verifiable as correct and would mean that entries can
+        # be cross-checked against :participants.
+        # (Once a process has accepted a ballot, its :prepared value will be
+        # overwritten with :accepted.)
+        :quorum => %{required(atom()) => :prepared | :accepted},
+
+        # See :accepted.
+        :greatest_accepted => integer()
+      }},
+      default: %{}
+
+    field :concluded_ballots,
+      # instance_number =>
+      %{required(integer()) => %{
+        # ballot_number =>
+        required(integer()) =>
+          # ballot_result
+          {:accepted, any()} | {:aborted}
       }},
       default: %{}
 
@@ -183,14 +208,17 @@ defmodule Paxos do
   if there was one. Otherwise, returns nil. Also returns nil on timeout.
   """
   def get_decision(delegate, instance_number, timeout) do
-    rpc_paxos(
+    result = rpc_paxos(
       # Deliver, to delegate...
       delegate,
       # the following message:
-      Message.pack(:get_decision, {timeout}, %{reply_to: self()}),
+      Message.pack(:get_decision, {instance_number}, %{reply_to: self()}),
       # After timeout, return nil.
       timeout, nil
     )
+
+    Logger.flush()
+    result
   end
 
   @doc """
@@ -297,7 +325,13 @@ defmodule Paxos do
     state = %{state
       | ballots: Map.put(
         state.ballots, {instance_number, current_ballot},
-        %{proposer: reply_to, value: value, metadata: metadata}
+        %{
+          proposer: reply_to,
+          value: value,
+          metadata: metadata,
+          quorum: %{},
+          greatest_accepted: 0
+        }
       )
     }
 
@@ -314,7 +348,13 @@ defmodule Paxos do
   # send :prepared to reply_to.
   # Otherwise, send :nack.
   defp paxos_prepare(state, instance_number, reply_to, %{ballot: ballot}) do
-    if ballot > state.current_ballot do
+    # If the current_ballot number for this instance does not exist, initialize
+    # it to 0. Likewise, initialize accepted for this instance.
+    state = %{state |
+      current_ballot: Map.put_new(state.current_ballot, instance_number, 0),
+      accepted: Map.put_new(state.accepted, instance_number, {0, nil})}
+
+    if ballot > state.current_ballot[instance_number] do
       # If the new ballot is greater than any current ballot, tell the leader
       # we're prepared to accept this as our current ballot and indicate to
       # ourselves that we've seen at least this ballot (if the ballot is later
@@ -323,8 +363,9 @@ defmodule Paxos do
       # is fine - if we are the leader, that logic is handled elsewhere, in the
       # other stages, anyway).
       send(reply_to, Message.pack(:prepared, %{
+        process: state.name,
         ballot: ballot,
-        accepted: state.accepted,
+        accepted: state.accepted[instance_number],
       }))
 
       %{
@@ -344,42 +385,195 @@ defmodule Paxos do
   # Check if the incoming ballot is greater than the current one. If it is,
   # send :prepared to reply_to.
   # Otherwise, send :nack.
-  defp paxos_prepared(state, instance_number, %{accepted: _, ballot: ballot_number}) do
-    with ballot when ballot != nil <- Map.get(state.ballots, instance_number) do
+  defp paxos_prepared(state, instance_number, %{
+    process: process_name,
+    accepted: process_last_accepted,
+    ballot: ballot_number
+  }) do
+    # Check if the ballot is one we've registered as one we're leading.
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
 
-      # TODO: implement this.
-      # return NACK for testing purposes.
-      send(self(), Message.pack(:nack, %{ballot: ballot}))
+      # Add the process that has indicated prepared to the quorum map.
+      ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :prepared)}
 
-      # If quorum reached, broadcast accept.
-      # if is_quorum(/* accepted */, )
+      # Store the accepted value in ballot.greatest_accepted. This is to keep
+      # track of the accepted value FROM THE PROCESS THAT HAS THE HIGHEST
+      # PREVIOUSLY ACCEPTED BALLOT.
+      ballot = if elem(process_last_accepted, 0) > ballot.greatest_accepted do
+        # If this accepted value is higher than the current one, use it (this
+        # should be accepted instead of the initially proposed value).
+        %{ballot |
+          greatest_accepted: elem(process_last_accepted, 0),
+          value: elem(process_last_accepted, 1)}
+      else
+        # Otherwise, there's no need to do anything.
+        ballot
+      end
 
-      # Else, store ballot and do nothing.
+      # Update the changes to ballot within state, before continuing.
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+
+      # If quorum reached, broadcast accept (otherwise do nothing).
+      if upon_quorum_for(
+        :prepared,
+        state.ballots[{instance_number, ballot_number}].quorum,
+        state.participants
+      ) do
+        BestEffortBroadcast.broadcast(
+          state.participants,
+          Message.pack(
+            # -- Command
+            :accept,
+
+            # -- Data
+            # We indicate the decided ballot value for the given ballot number.
+            %{ballot: ballot_number, value: ballot.value},
+
+            # -- Additional Options
+            # Send replies to :accept to the Paxos delegate - not the client.
+            %{reply_to: self()}
+          )
+        )
+      end
+
+      state
     else
       _ ->
         # This response is returned for future use, but currently will just be
         # thrown away. This is fine, we can safely disregard them - it's likely
         # that we aborted the ballot and other processes are catching up.
         {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        state
     end
 
-    :skip_reply
+    %{result: :skip_reply, state: state}
+  end
+
+  defp paxos_accept(state, instance_number, reply_to, %{
+    ballot: ballot, value: value
+  }) do
+    if ballot >= state.current_ballot[instance_number] do
+
+      # Initialize concluded_ballots for this instance, if it has not already
+      # been initialized.
+      state = %{state |
+        concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
+
+      # Mark the ballot as accepted and update the current ballot number to
+      # reflect the last ballot we've processed. Then, update concluded_ballots
+      # to reflect the status of this ballot.
+      state = %{state |
+        current_ballot: Map.put(state.current_ballot, instance_number, ballot),
+        accepted: {ballot, value},
+        concluded_ballots: %{state.concluded_ballots |
+          instance_number => Map.put(state.concluded_ballots[instance_number], ballot, {:accepted, value})
+        }
+      }
+
+      # Now send :accepted to indicate we've done so.
+      send(reply_to, Message.pack(:accepted, %{
+        process: state.name,
+        ballot: ballot
+      }))
+
+      %{
+        result: :skip_reply,
+        state: state
+      }
+    else
+      # If we've already processed this ballot, or a ballot after this one, we
+      # must not accept it and instead indicate that we've rejected it (i.e.,
+      # not acknowledged, nack).
+      send(reply_to, Message.pack(:nack, %{ballot: ballot}))
+      %{result: :skip_reply, state: state}
+    end
+  end
+
+  defp paxos_accepted(state, instance_number, %{process: process_name, ballot: ballot_number}) do
+    # Check if the ballot is one we've registered as one we're leading.
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+
+      # Add the process that has indicated accepted to the quorum map.
+      ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :accepted)}
+
+      # Update the changes to ballot within state, before continuing.
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+
+      if upon_quorum_for(
+        :accepted,
+        state.ballots[{instance_number, ballot_number}].quorum,
+        state.participants
+      ) do
+        # We've reached a quorum of :accepted! Yay! Consensus achieved.
+
+        # Initialize concluded_ballots for this instance, if it has not already
+        # been initialized.
+        state = %{state |
+          concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
+
+        # Delete the ballot from state. It's no longer needed. Also update
+        # concluded_ballots to reflect the result of this ballot.
+        state = %{state
+          | ballots: Map.delete(state.ballots, {instance_number, ballot_number}),
+            concluded_ballots: %{state.concluded_ballots |
+              instance_number => Map.put(state.concluded_ballots[instance_number], ballot_number, {:aborted})
+            }
+        }
+
+        # Return decision by replying to the client's propose message.
+        send(
+          ballot.proposer,
+          Message.pack_encrypted(
+            ballot.metadata.rpc_id, :propose,
+            {:decision, ballot.value},
+            %{
+              key: state.keys[ballot.metadata.key],
+              challenge: ballot.metadata.challenge
+            }
+          )
+        )
+
+        state
+      end
+    else
+      _ ->
+        # This response is returned for future use, but currently will just be
+        # thrown away. This is fine, we can safely disregard them - it's likely
+        # that we aborted the ballot and other processes are catching up.
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        state
+    end
+
+    %{result: :skip_reply, state: state}
   end
 
   defp paxos_nack(state, instance_number, %{ballot: ballot_number}) do
     # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
-    state = if Map.has_key?(state.ballots, {instance_number, ballot_number}) do
-      proposal = state.ballots[{instance_number, ballot_number}]
-      state = %{state | ballots: Map.delete(state.ballots, {instance_number, ballot_number})}
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+      # Initialize concluded_ballots for this instance, if it has not already
+      # been initialized.
+      state = %{state |
+        concluded_ballots: Map.put_new(state.concluded_ballots, instance_number, %{})}
+
+      # Update the state to show the status of this ballot.
+      state = %{state |
+        ballots: Map.delete(state.ballots, {instance_number, ballot_number}),
+        concluded_ballots: %{state.concluded_ballots |
+          instance_number => Map.put(state.concluded_ballots[instance_number], ballot_number, {:aborted})
+        }
+      }
 
       # Return abort by replying to the client's propose message.
       send(
-        proposal.proposer,
-        Message.pack_encrypted(:propose, {:abort}, %{
-          key: state.keys[proposal.metadata.key],
-          challenge: proposal.metadata.challenge
-        })
+        ballot.proposer,
+        Message.pack_encrypted(
+          ballot.metadata.rpc_id,
+          :propose, {:abort}, %{
+            key: state.keys[ballot.metadata.key],
+            challenge: ballot.metadata.challenge
+          }
+        )
       )
 
       state
@@ -392,9 +586,35 @@ defmodule Paxos do
 
   # Paxos.get_decision - Step 1 of 1
   # Returns the decision that was arrived at for the specified instance_number.
-  defp paxos_get_decision(state, instance_number, reply_to, {}) do
-    # TODO
-    IO.puts("TODO -- get_decision -- #{state} #{instance_number} #{reply_to}")
+  defp paxos_get_decision(state, instance_number, reply_to, {instance_number}, metadata) do
+    result = if Map.has_key?(state.concluded_ballots, instance_number) do
+      # Get the latest ballot for a given instance, that has been accepted.
+      latest_accepted_ballot = Map.filter(
+        state.concluded_ballots[instance_number],
+        fn {_, v} -> elem(v, 0) == :accepted end
+      )
+      |> Map.keys
+      |> Enum.max
+
+      # Get the value for the latest_accepted_ballot.
+      elem(state.concluded_ballots[instance_number][latest_accepted_ballot], 1)
+    else
+      nil
+    end
+
+    # Send the reply back to the client.
+    send(
+      reply_to,
+      Message.pack_encrypted(
+        metadata.rpc_id,
+        :get_decision, result, %{
+          key: state.keys[metadata.key],
+          challenge: metadata.challenge
+        }
+      )
+    )
+
+    :skip_reply
   end
 
 
@@ -412,7 +632,7 @@ defmodule Paxos do
 
   defp handle_message_middlewares(state, message) do
     message = case message do
-      {:encrypted, encrypted_payload, key_id} ->
+      {:encrypted, rpc_id, encrypted_payload, key_id} ->
         # Decrypt and decode the message and challenge using the requested key.
         %{message: message, challenge: challenge} = :erlang.binary_to_term(
           Crypto.decrypt(state.keys[key_id], encrypted_payload)
@@ -421,7 +641,7 @@ defmodule Paxos do
         # Inject the key ID and challenge into the message as part of the
         # metadata.
         message = Map.merge(%{metadata: %{}}, message)
-        %{message | metadata: Map.merge(message.metadata, %{key: key_id, challenge: challenge})}
+        %{message | metadata: Map.merge(message.metadata, %{rpc_id: rpc_id, key: key_id, challenge: challenge})}
 
       # In any case, if the message is a map, inject the metadata property.
       _ -> if is_map(message), do: Map.merge(%{metadata: %{}}, message), else: message
@@ -468,7 +688,7 @@ defmodule Paxos do
           # requests to a Paxos delegate process (participant) with
           # Paxos.propose/4 or Paxos.get_decision/3, etc.,
           :propose -> paxos_propose(state, instance_number, reply_to, payload, metadata)
-          :get_decision -> paxos_get_decision(state, instance_number, reply_to, payload)
+          :get_decision -> paxos_get_decision(state, instance_number, reply_to, payload, metadata)
 
           # Broadcast Commands (generally broadcasted)
           # ------------------------------------------
@@ -476,6 +696,8 @@ defmodule Paxos do
           # processes (usually broadcasted).
           :prepare -> paxos_prepare(state, instance_number, reply_to, payload)
           :prepared -> paxos_prepared(state, instance_number, payload)
+          :accept -> paxos_accept(state, instance_number, reply_to, payload)
+          :accepted -> paxos_accepted(state, instance_number, payload)
           :nack -> paxos_nack(state, instance_number, payload)
 
           # Fallback Handler
@@ -503,10 +725,12 @@ defmodule Paxos do
 
         # Send the reply yielded from executing a command back to the client,
         # again with the Paxos implementation protocol.
-        if reply_to != nil and result != :skip_reply, do: send(
-          reply_to,
-          Message.pack(command, result)
-        )
+        if reply_to != nil and result != :skip_reply do
+          send(
+            reply_to,
+            Message.pack(command, result)
+          )
+        end
 
         # Finally, respond with the state.
         state
@@ -521,7 +745,7 @@ defmodule Paxos do
         command: command,
         reply_to: reply_to,
         payload: payload,
-        metadata: metadata
+        metadata: _
       } ->
         Logger.debug("Received general command.", [data: %{
           protocol: __MODULE__,
@@ -662,6 +886,8 @@ defmodule Paxos do
   # Used by calling process (i.e., a client) to execute a remote procedure call
   # to a Paxos delegate, and get a response.
   defp rpc_paxos(delegate, message, timeout, value_on_timeout \\ {:timeout}) do
+    rpc_id = Crypto.unique_value()
+
     # Keys can be exchanged at any time (e.g., on startup/initialization), but
     # for demonstration purposes, they are exchanged here.
     key = Crypto.generate_key()
@@ -673,7 +899,7 @@ defmodule Paxos do
     {challenge, solution} = Crypto.create_challenge(key)
 
     # Send the message to the delegate, encrypted and include the challenge.
-    send(delegate, {:encrypted, Crypto.encrypt(key, :erlang.term_to_binary(%{
+    send(delegate, {:encrypted, rpc_id, Crypto.encrypt(key, :erlang.term_to_binary(%{
       message: message,
       challenge: challenge
     })), key_id})
@@ -681,28 +907,36 @@ defmodule Paxos do
     # Wait for a reply that satisfies the conditions, then return the payload
     # from the reply.
     receive do
-      {:encrypted, encoded} ->
-        %{
-          message: reply,
-          challenge_response: challenge_response
-        } = :erlang.binary_to_term(Crypto.decrypt(key, encoded))
+      {:encrypted, incoming_rpc_id, encoded} when rpc_id == incoming_rpc_id ->
+        payload = Crypto.decrypt(key, encoded)
 
-        # The key is no longer needed, it can be deleted from the Paxos
-        # delegate.
-        Paxos.delete_key(delegate, key_id)
+        if payload != :error do
 
-        if (
-          # Verify payload headers.
-          reply.protocol == message.protocol and
-          reply.command == message.command and
-          reply.instance_number == message.instance_number and
-          reply.reply_to == nil and
-          # Verify challenge-response.
-          Crypto.verify_challenge_response(key, challenge_response, solution)) do
-            # If the reply checks out, return the payload.
-            reply.payload
+          %{
+            message: reply,
+            challenge_response: challenge_response
+          } = :erlang.binary_to_term(payload)
+
+          # The key is no longer needed, it can be deleted from the Paxos
+          # delegate.
+          Paxos.delete_key(delegate, key_id)
+
+          if (
+            # Verify payload headers.
+            reply.protocol == message.protocol and
+            reply.command == message.command and
+            reply.instance_number == message.instance_number and
+            reply.reply_to == nil and
+            # Verify challenge-response.
+            Crypto.verify_challenge_response(key, challenge_response, solution)) do
+              # If the reply checks out, return the payload.
+              reply.payload
+          else
+            # Otherwise, return the timeout value.
+            value_on_timeout
+          end
+
         else
-          # Otherwise, return the timeout value.
           value_on_timeout
         end
 
@@ -711,8 +945,28 @@ defmodule Paxos do
     end
   end
 
-  defp is_quorum(number_of_elements, total),
-    do: number_of_elements >= div(total, 2) + 1
+  # Checks if, for a given status, there is a quorum out of the total
+  # processes.
+  #
+  # status = the status atom to check if a quorum of processes has arrived at,
+  #          e.g., :prepared or :accepted
+  # quorum_state = state.ballots[{instance_number, ballot_number}].quorum
+  # all_participants = state.participants
+  defp upon_quorum_for(status, quorum_state, all_participants) do
+    # number_of_elements >= div(total, 2) + 1
+
+    # Count the number of elements whose value matches the status.
+    number_of_elements =
+      Map.filter(quorum_state, fn {_, v} -> v == status end)
+      |> Enum.count
+
+    # Count the total number of participants in the system.
+    total = length(all_participants)
+
+    # Now return whether or not the number of nodes in the required condition
+    # is equal to floor(total / 2) + 1 (i.e., a majority).
+    number_of_elements == div(total, 2) + 1
+  end
 
   # ---------------------------------------------------------------------------
 
