@@ -51,7 +51,7 @@ defmodule TestHarness do
 
     def deploy_procs(func, config) do
         os_pids = for node <- MapSet.new(nodes(config)) do
-            cmd = "elixir --sname " <> (hd String.split(Atom.to_string(node), "@")) <> " --no-halt --erl \"-detached\" --erl \"-kernel prevent_overlapping_partitions false\""
+            cmd = "elixir --sname " <> (hd String.split(Atom.to_string(node), "@")) <> " --no-halt --erl \"-detached\" --erl \"-kernel prevent_overlapping_partitions false\" -S mix"
             cmd = String.to_charlist(cmd)
             # IO.puts("#{inspect cmd}")
             :os.cmd(cmd)
