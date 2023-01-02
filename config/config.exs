@@ -29,6 +29,7 @@ defmodule ConsoleLogger do
       pid = Keyword.get(metadata, :pid)
 
       if is_pid(pid) and
+        node(pid) == node() and
         is_tuple(Process.info(pid, :registered_name)) and
         is_atom(elem(Process.info(pid, :registered_name), 1)) do
         Atom.to_string(elem(Process.info(pid, :registered_name), 1))
@@ -38,10 +39,10 @@ defmodule ConsoleLogger do
     end
 
     "[#{date_str} #{time_str}] #{level_str} #{String.pad_trailing("[" <> process_str <> "]", 15)} | #{message} #{metadata_str}\n"
-  # rescue
-  #   error ->
-  #     IO.puts(:standard_error, error)
-  #     "#{inspect {level, message, {date, time}, metadata}} (formatting failed)\n"
+  rescue
+    error ->
+      IO.puts(:standard_error, error)
+      "#{inspect {level, message, {date, time}, metadata}} (formatting failed)\n"
   end
 
   # Format the module, function, arity string.
@@ -53,7 +54,7 @@ end
 import Config
 
 config :logger, :console,
-  # format: "[$date $time] [$level] | $message | $metadata\n",
   format: {ConsoleLogger, :format},
   metadata: [:mfa, :file, :registered_name, :pid, :data],
-  colors: [enabled: true]
+  colors: [enabled: true],
+  level: :warn

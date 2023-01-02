@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="ELIXIR_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <output url="file://$MODULE_DIR$/_build/dev/lib/paxos/ebin" />
+    <output-test url="file://$MODULE_DIR$/_build/test/lib/paxos/ebin" />
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/lib" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/spec" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/test" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/assets/node_modules/phoenix" />
+      <excludeFolder url="file://$MODULE_DIR$/assets/node_modules/phoenix_html" />
+      <excludeFolder url="file://$MODULE_DIR$/cover" />
+      <excludeFolder url="file://$MODULE_DIR$/deps" />
+      <excludeFolder url="file://$MODULE_DIR$/doc" />
+      <excludeFolder url="file://$MODULE_DIR$/logs" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/uuid" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/poison" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/ex_crypto" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/typed_struct" />
+    </content>
+    <orderEntry type="jdk" jdkName="Elixir 1.14.2" jdkType="Elixir SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="library" name="typed_struct" level="project" />
+    <orderEntry type="library" name="uuid" level="project" />
+    <orderEntry type="library" name="ex_check" level="project" />
+    <orderEntry type="library" name="credo" level="project" />
+    <orderEntry type="library" name="dialyxir" level="project" />
+    <orderEntry type="library" name="excoveralls" level="project" />
+    <orderEntry type="library" name="mix_test_watch" level="project" />
+    <orderEntry type="library" name="ex_unit_notifier" level="project" />
+    <orderEntry type="library" name="ex_doc" level="project" />
+    <orderEntry type="library" name="earmark" level="project" />
+    <orderEntry type="library" name="benchfella" level="project" />
+  </component>
+</module>
