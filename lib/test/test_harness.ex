@@ -38,10 +38,10 @@ defmodule TestHarness do
     def get_os_pid(node) do
         Process.sleep(1000)
 
-        Node.spawn(node, TestHarness, :send_back_os_pid, [self()])
-        # (fn pid -> Node.spawn(node,
-        #     fn -> send(pid, {:os_pid, :os.getpid()}) end
-        # ) end).(self())
+        # Node.spawn(node, TestHarness, :send_back_os_pid, [self()])
+        (fn pid -> Node.spawn(node,
+            fn -> send(pid, {:os_pid, :os.getpid}) end
+        ) end).(self())
 
         receive do
             {:os_pid, os_pid} -> os_pid
