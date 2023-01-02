@@ -486,6 +486,7 @@ defmodule Paxos do
         state.participants
       ) do
         # We've reached a quorum of :accepted! Yay! Consensus achieved.
+        Logger.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_number, value: ballot.value]])
 
         # Delete the ballot from state. It's no longer needed.
         state = %{state
@@ -505,6 +506,8 @@ defmodule Paxos do
           )
         )
 
+        state
+      else
         state
       end
     else
@@ -634,7 +637,7 @@ defmodule Paxos do
         # Handle pre-set commands specified with the Paxos implementation
         # protocol by executing the appropriate handler function. Before we do,
         # we'll log the message for debugging purposes.
-        Logger.debug("Received Paxos message.", [data: %{
+        Logger.debug("✉️", [data: %{
           protocol: __MODULE__,
           command: command,
           instance_number: instance_number,
@@ -708,7 +711,7 @@ defmodule Paxos do
         payload: payload,
         metadata: _
       } ->
-        Logger.debug("Received general command.", [data: %{
+        Logger.debug("⚙️", [data: %{
           protocol: __MODULE__,
           command: command,
           reply_to: reply_to,
