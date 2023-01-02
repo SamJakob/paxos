@@ -813,8 +813,13 @@ defmodule Paxos do
         end
       # End General Commands.
 
-      error_message when is_tuple(error_message) and elem(error_message, 0) == :error ->
+      # Handle error messages by logging them.
+      error_message when is_tuple(error_message) and elem(error_message, 0) == :error or elem(error_message, 1) == :error ->
         Logger.warn("Received error message.", [data: error_message])
+        state
+
+      # Ignore unrecognized messages.
+      _ ->
         state
     end
 
