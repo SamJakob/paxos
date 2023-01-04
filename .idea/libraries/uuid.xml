@@ -10,6 +10,7 @@
     <SOURCES>
       <root url="file://$PROJECT_DIR$/deps/uuid/lib" />
       <root url="file://$PROJECT_DIR$/deps/uuid/lib" />
+      <root url="file://$PROJECT_DIR$/deps/uuid/lib" />
     </SOURCES>
   </library>
 </component>

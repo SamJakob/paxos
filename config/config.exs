@@ -56,5 +56,5 @@ import Config
 config :logger, :console,
   format: {ConsoleLogger, :format},
   metadata: [:mfa, :file, :registered_name, :pid, :data],
-  colors: [enabled: true],
-  level: :warn
+  colors: [enabled: true]
+#  level: :warn

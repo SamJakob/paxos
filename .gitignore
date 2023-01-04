@@ -24,3 +24,7 @@ paxos-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Distribution files
+dist/
+

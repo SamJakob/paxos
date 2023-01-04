@@ -10,6 +10,7 @@
     <SOURCES>
       <root url="file://$PROJECT_DIR$/deps/typed_struct/lib" />
       <root url="file://$PROJECT_DIR$/deps/typed_struct/lib" />
+      <root url="file://$PROJECT_DIR$/deps/typed_struct/lib" />
     </SOURCES>
   </library>
 </component>
