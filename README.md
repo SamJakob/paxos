@@ -3,7 +3,7 @@
 An Abortable Παξος Implementation for Consensus based on Leslie Lamport's
 paper, "Paxos Made Simple".
 
-Requires OTP >= 23.
+Requires Elixir >= 1.13 and OTP >= 23.
 
 > This multi-file setup using Mix is currently broken when run in the
 > Vagrant testing VM on Windows. Please instead refer to the single-file
