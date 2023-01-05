@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Simple build script to combine all source files into one flat Elixir script.
 

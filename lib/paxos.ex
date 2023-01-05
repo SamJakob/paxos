@@ -5,9 +5,17 @@ defmodule Paxos do
   Made Simple" paper.
   """
 
+  # External dependencies.
   use TypedStruct
-  require Message
-  require Logger
+
+  # Logger module configuration.
+  @loggerModule Paxos.LoggerShim
+  require Paxos.LoggerShim
+#  require Logger
+
+  # Paxos sub-modules.
+  require Paxos.Message
+  require Paxos.Crypto
 
   # State for the current module.
   # This is a struct that may be initialized with either the name of the
@@ -72,7 +80,7 @@ defmodule Paxos do
   """
   def start(name, participants) do
     if not Enum.member?(participants, name) do
-      Logger.error("The Paxos process is not in its own participants list.", [data: [process: name, participants: participants]])
+      @loggerModule.error("The Paxos process is not in its own participants list.", [data: [process: name, participants: participants]])
       nil
     else
       # Spawn a process, call Paxos.init with the specified parameters.
@@ -99,10 +107,9 @@ defmodule Paxos do
         receive do
           # Process is confirmed to be alive, continue and return PID.
           :raw_signal_startup_complete ->
-            Logger.info("Successfully initialized Paxos instance.", [data: [name: name]])
+            @loggerModule.info("Successfully initialized Paxos instance.", [data: [name: name]])
 
             # Return the process ID of the spawned Paxos instance.
-            Logger.flush()
             pid
 
           # Process has confirmed abort. It should kill itself and we can just
@@ -112,17 +119,20 @@ defmodule Paxos do
 
           # If the process has totally hung or become unresponsive, we will
           # attempt to kill the process.
-          after 5000 ->
+          after 10000 ->
             if Process.alive?(pid) do
-              Logger.error("Paxos delegate initialization timed out. Aborting.")
+              @loggerModule.error("Paxos delegate initialization timed out. Trying again...")
 
               # Process failed to acknowledge startup and is now orphaned so
               # attempt to kill it.
+              :global.unregister_name(name)
+              Process.unregister(pid, name)
               Process.exit(pid, :killed_orphaned)
-            end
 
-            # Return nothing.
-            nil
+              # Now attempt to reboot the process.
+              @loggerModule.info("Re-attempting to initialize Paxos delegate.", [date: [name: name]])
+              Paxos.start(name, participants)
+            end
         end
       # Intercept problems to attempt to kill the process gracefully.
       rescue e ->
@@ -140,21 +150,21 @@ defmodule Paxos do
   def init(name, participants, spawner) do
     # Wait for the spawning process to signal that this one can be booted
     # (i.e., that everything has been registered.)
-    Logger.info("Waiting for initialize signal...")
+    @loggerModule.info("Waiting for initialize signal...")
 
     can_continue = receive do
       # If we get the signal / 'go ahead' to initialize, log and then continue.
       :raw_signal_startup ->
-        Logger.info("Initializing...")
+        @loggerModule.info("Initializing...")
         :yes
       # Arbitrary kill signal (i.e., external registration failed).
       :raw_signal_kill ->
-        Logger.info("Aborted startup.")
+        @loggerModule.info("Aborted startup.")
         send(spawner, :raw_signal_startup_aborted)
         :no
       # Timeout whilst confirming initialize. Process cannot be registered.
-      after 1000 ->
-        Logger.error(
+      after 30000 ->
+        @loggerModule.error(
           "Timed out whilst waiting for initialize signal. (Did the process fail to register?)"
         )
         :no
@@ -171,7 +181,7 @@ defmodule Paxos do
         participants: participants
       }
 
-      Logger.notice("Ready! Listening as #{name} (#{inspect(self())}).")
+      @loggerModule.notice("Ready! Listening as #{name} (#{inspect(self())}).")
       send(spawner, :raw_signal_startup_complete)
       run(state)
     end
@@ -182,15 +192,12 @@ defmodule Paxos do
   instance_number.
   """
   def propose(delegate, instance_number, value, timeout) do
-    result = rpc_paxos(
+    rpc_paxos(
       # Deliver, to delegate, the following message:
-      delegate, Message.pack(:propose, {value}, %{reply_to: self()}),
+      delegate, Paxos.Message.pack(:propose, {value}, %{reply_to: self()}),
       # After timeout, return the default of :timeout.
       timeout
     )
-
-    Logger.flush()
-    result
   end
 
   @doc """
@@ -198,17 +205,14 @@ defmodule Paxos do
   if there was one. Otherwise, returns nil. Also returns nil on timeout.
   """
   def get_decision(delegate, instance_number, timeout) do
-    result = rpc_paxos(
+    rpc_paxos(
       # Deliver, to delegate...
       delegate,
       # the following message:
-      Message.pack(:get_decision, {instance_number}, %{reply_to: self()}),
+      Paxos.Message.pack(:get_decision, {instance_number}, %{reply_to: self()}),
       # After timeout, return nil.
       timeout, nil
     )
-
-    Logger.flush()
-    result
   end
 
   @doc """
@@ -296,7 +300,7 @@ defmodule Paxos do
 
     BestEffortBroadcast.broadcast(
       state.participants,
-      Message.pack(
+      Paxos.Message.pack(
         # -- Command
         :prepare,
 
@@ -352,7 +356,7 @@ defmodule Paxos do
       # able to re-prepare that ballot, so incrementing current_ballot here
       # is fine - if we are the leader, that logic is handled elsewhere, in the
       # other stages, anyway).
-      send(reply_to, Message.pack(:prepared, %{
+      send(reply_to, Paxos.Message.pack(:prepared, %{
         process: state.name,
         ballot: ballot,
         accepted: state.accepted[instance_number],
@@ -366,7 +370,7 @@ defmodule Paxos do
       # If we've already processed this ballot, or a ballot after this one, we
       # must not accept it and instead indicate that we've rejected it (i.e.,
       # not acknowledged, nack).
-      send(reply_to, Message.pack(:nack, %{ballot: ballot}))
+      send(reply_to, Paxos.Message.pack(:nack, %{ballot: ballot}))
       %{result: :skip_reply, state: state}
     end
   end
@@ -411,7 +415,7 @@ defmodule Paxos do
       ) do
         BestEffortBroadcast.broadcast(
           state.participants,
-          Message.pack(
+          Paxos.Message.pack(
             # -- Command
             :accept,
 
@@ -452,7 +456,7 @@ defmodule Paxos do
       }
 
       # Now send :accepted to indicate we've done so.
-      send(reply_to, Message.pack(:accepted, %{
+      send(reply_to, Paxos.Message.pack(:accepted, %{
         process: state.name,
         ballot: ballot
       }))
@@ -465,7 +469,7 @@ defmodule Paxos do
       # If we've already processed this ballot, or a ballot after this one, we
       # must not accept it and instead indicate that we've rejected it (i.e.,
       # not acknowledged, nack).
-      send(reply_to, Message.pack(:nack, %{ballot: ballot}))
+      send(reply_to, Paxos.Message.pack(:nack, %{ballot: ballot}))
       %{result: :skip_reply, state: state}
     end
   end
@@ -486,7 +490,7 @@ defmodule Paxos do
         state.participants
       ) do
         # We've reached a quorum of :accepted! Yay! Consensus achieved.
-        Logger.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_number, value: ballot.value]])
+        @loggerModule.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_number, value: ballot.value]])
 
         # Delete the ballot from state. It's no longer needed.
         state = %{state
@@ -496,7 +500,7 @@ defmodule Paxos do
         # Return decision by replying to the client's propose message.
         send(
           ballot.proposer,
-          Message.pack_encrypted(
+          Paxos.Message.pack_encrypted(
             ballot.metadata.rpc_id, :propose,
             {:decision, ballot.value},
             %{
@@ -534,7 +538,7 @@ defmodule Paxos do
       # Return abort by replying to the client's propose message.
       send(
         ballot.proposer,
-        Message.pack_encrypted(
+        Paxos.Message.pack_encrypted(
           ballot.metadata.rpc_id,
           :propose, {:abort}, %{
             key: state.keys[ballot.metadata.key],
@@ -569,7 +573,7 @@ defmodule Paxos do
     # Send the reply back to the client.
     send(
       reply_to,
-      Message.pack_encrypted(
+      Paxos.Message.pack_encrypted(
         metadata.rpc_id,
         :get_decision, result, %{
           key: state.keys[metadata.key],
@@ -599,7 +603,7 @@ defmodule Paxos do
       {:encrypted, rpc_id, encrypted_payload, key_id} ->
         # Decrypt and decode the message and challenge using the requested key.
         %{message: message, challenge: challenge} = :erlang.binary_to_term(
-          Crypto.decrypt(state.keys[key_id], encrypted_payload)
+          Paxos.Crypto.decrypt(state.keys[key_id], encrypted_payload)
         )
 
         # Inject the key ID and challenge into the message as part of the
@@ -637,7 +641,7 @@ defmodule Paxos do
         # Handle pre-set commands specified with the Paxos implementation
         # protocol by executing the appropriate handler function. Before we do,
         # we'll log the message for debugging purposes.
-        Logger.debug("✉️", [data: %{
+        @loggerModule.debug("✉️", [data: %{
           protocol: __MODULE__,
           command: command,
           instance_number: instance_number,
@@ -670,7 +674,7 @@ defmodule Paxos do
           # replies with a message indicating that the requested command was
           # unknown.
           _ ->
-            Logger.warn("Received bad/unknown command, #{inspect command}.")
+            @loggerModule.warn("Received bad/unknown command, #{inspect command}.")
             {:error, "Bad/unknown command specified."}
         end
 
@@ -692,7 +696,7 @@ defmodule Paxos do
         if reply_to != nil and result != :skip_reply do
           send(
             reply_to,
-            Message.pack(command, result)
+            Paxos.Message.pack(command, result)
           )
         end
 
@@ -711,7 +715,7 @@ defmodule Paxos do
         payload: payload,
         metadata: _
       } ->
-        Logger.debug("⚙️", [data: %{
+        @loggerModule.debug("⚙️", [data: %{
           protocol: __MODULE__,
           command: command,
           reply_to: reply_to,
@@ -815,7 +819,7 @@ defmodule Paxos do
 
       # Handle error messages by logging them.
       error_message when is_tuple(error_message) and elem(error_message, 0) == :error or elem(error_message, 1) == :error ->
-        Logger.warn("Received error message.", [data: error_message])
+        @loggerModule.warn("Received error message.", [data: error_message])
         state
 
       # Ignore unrecognized messages.
@@ -855,20 +859,20 @@ defmodule Paxos do
   # Used by calling process (i.e., a client) to execute a remote procedure call
   # to a Paxos delegate, and get a response.
   defp rpc_paxos(delegate, message, timeout, value_on_timeout \\ {:timeout}) do
-    rpc_id = Crypto.unique_value()
+    rpc_id = Paxos.Crypto.unique_value()
 
     # Keys can be exchanged at any time (e.g., on startup/initialization), but
     # for demonstration purposes, they are exchanged here.
-    key = Crypto.generate_key()
+    key = Paxos.Crypto.generate_key()
 
     # Send the key to the Paxos delegate for the lifecycle of this RPC.
     key_id = Paxos.add_key(delegate, key)
 
     # Create the challenge and solution.
-    {challenge, solution} = Crypto.create_challenge(key)
+    {challenge, solution} = Paxos.Crypto.create_challenge(key)
 
     # Send the message to the delegate, encrypted and include the challenge.
-    send(delegate, {:encrypted, rpc_id, Crypto.encrypt(key, :erlang.term_to_binary(%{
+    send(delegate, {:encrypted, rpc_id, Paxos.Crypto.encrypt(key, :erlang.term_to_binary(%{
       message: message,
       challenge: challenge
     })), key_id})
@@ -877,7 +881,7 @@ defmodule Paxos do
     # from the reply.
     receive do
       {:encrypted, incoming_rpc_id, encoded} when rpc_id == incoming_rpc_id ->
-        payload = Crypto.decrypt(key, encoded)
+        payload = Paxos.Crypto.decrypt(key, encoded)
 
         if payload != :error do
 
@@ -897,7 +901,7 @@ defmodule Paxos do
             reply.instance_number == message.instance_number and
             reply.reply_to == nil and
             # Verify challenge-response.
-            Crypto.verify_challenge_response(key, challenge_response, solution)) do
+            Paxos.Crypto.verify_challenge_response(key, challenge_response, solution)) do
               # If the reply checks out, return the payload.
               reply.payload
           else
