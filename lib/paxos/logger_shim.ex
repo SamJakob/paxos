@@ -9,7 +9,7 @@ defmodule Paxos.LoggerShim do
   @printableLogLevels true
 
   defp write_log(level, message, device \\ :stdio) do
-    if not @printableLogLevels == false and (not is_list(@printableLogLevels) or Enum.member?(@printableLogLevels, level)) do
+    if not is_list(@printableLogLevels) or Enum.member?(@printableLogLevels, level) do
       timestamp = DateTime.to_iso8601(DateTime.now!("Etc/UTC"))
       IO.puts(device, "#{timestamp} | #{level} | #{message}")
     end

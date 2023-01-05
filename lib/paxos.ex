@@ -126,7 +126,7 @@ defmodule Paxos do
               # Process failed to acknowledge startup and is now orphaned so
               # attempt to kill it.
               :global.unregister_name(name)
-              Process.unregister(pid, name)
+              Process.unregister(name)
               Process.exit(pid, :killed_orphaned)
 
               # Now attempt to reboot the process.
@@ -927,6 +927,8 @@ defmodule Paxos do
   # all_participants = state.participants
   defp upon_quorum_for(status, quorum_state, all_participants) do
     # number_of_elements >= div(total, 2) + 1
+
+    IO.puts(inspect quorum_state)
 
     # Count the number of elements whose value matches the status.
     number_of_elements =

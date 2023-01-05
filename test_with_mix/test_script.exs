@@ -1,11 +1,11 @@
 # Replace with your own implementation source files
 # IEx.Helpers.c "beb.ex", "."
-IEx.Helpers.c "paxos.ex", "."
+# IEx.Helpers.c "paxos.ex", "."
 
 # Do not modify the following ##########
-IEx.Helpers.c "test_harness.ex", "."
-IEx.Helpers.c "paxos_test.ex", "."
-IEx.Helpers.c "test_util.ex", "."
+IEx.Helpers.c "test/test_harness.ex", "."
+IEx.Helpers.c "test/paxos_test.ex", "."
+IEx.Helpers.c "test/test_util.ex", "."
 # IEx.Helpers.c "uuid.ex", "."
 
 host = String.trim(to_string(:os.cmd('hostname -s')))
