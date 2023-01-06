@@ -9,9 +9,9 @@ defmodule Paxos do
   use TypedStruct
 
   # Logger module configuration.
-  @loggerModule Logger
-#  require Paxos.LoggerShim
-  require Logger
+  @loggerModule Paxos.LoggerShim
+  require Paxos.LoggerShim
+#  require Logger
 
   # Paxos sub-modules.
   require Paxos.Message
@@ -34,18 +34,18 @@ defmodule Paxos do
     # means accept whatever the current proposal is (hence the previously
     # accepted ballot value, here, is nil by default.)
     field :accepted,
-      # instance_number => {ballot_number, ballot_value}
+      # instance_number => {ballot_ref, ballot_value}
       %{required(integer()) => {integer(), any()}},
       default: %{}
 
-    # A map of instance number and ballot number to the data held for some
+    # A map of instance number and ballot ref to the data held for some
     # ballot.
     # This will only hold that value if the proposal was made to this process
     # and thus this process created a ballot for it - at this time, it is
     # anticipated that any given process will only handle one ballot at once.
     # (i.e., if this process is the leader.)
     field :ballots,
-      # {instance_number, ballot_number} => ...
+      # {instance_number, ballot_ref} => ...
       %{required({integer(), integer()}) => %{
         :proposer => pid(),
         :value => any(),
@@ -298,10 +298,13 @@ defmodule Paxos do
     # If the current_ballot number for this instance does not exist, initialize
     # it to 0.
     state = %{state |
-      current_ballot: Map.put_new(state.current_ballot, instance_number, 0)}
+      current_ballot: Map.put_new(state.current_ballot, instance_number, {state.name, 0})}
 
     # Fetch and increment the current ballot number for this instance.
-    current_ballot = Map.fetch!(state.current_ballot, instance_number) + 1
+    current_ballot = increment_ballot_ref(
+      Map.fetch!(state.current_ballot, instance_number),
+      state.name
+    )
 
     BestEffortBroadcast.broadcast(
       state.participants,
@@ -323,7 +326,8 @@ defmodule Paxos do
     # working on.
     state = %{state
       | ballots: Map.put(
-        state.ballots, {instance_number, current_ballot},
+        state.ballots,
+        {instance_number, current_ballot},
         %{
           proposer: reply_to,
           value: value,
@@ -350,10 +354,10 @@ defmodule Paxos do
     # If the current_ballot number for this instance does not exist, initialize
     # it to 0. Likewise, initialize accepted for this instance.
     state = %{state |
-      current_ballot: Map.put_new(state.current_ballot, instance_number, 0),
+      current_ballot: Map.put_new(state.current_ballot, instance_number, {state.name, 0}),
       accepted: Map.put_new(state.accepted, instance_number, {0, nil})}
 
-    if ballot > state.current_ballot[instance_number] do
+    if compare_ballot_ref(ballot, &>/2, state.current_ballot[instance_number]) do
       # If the new ballot is greater than any current ballot, tell the leader
       # we're prepared to accept this as our current ballot and indicate to
       # ourselves that we've seen at least this ballot (if the ballot is later
@@ -364,12 +368,15 @@ defmodule Paxos do
       send(reply_to, Paxos.Message.pack(:prepared, %{
         process: state.name,
         ballot: ballot,
-        accepted: state.accepted[instance_number],
+        accepted: state.accepted[instance_number]
       }))
 
       %{
         result: :skip_reply,
-        state: %{state | current_ballot: Map.put(state.current_ballot, instance_number, ballot)}
+        state: %{state | current_ballot: Map.put(
+          state.current_ballot, instance_number,
+          ballot
+        )}
       }
     else
       # If we've already processed this ballot, or a ballot after this one, we
@@ -387,10 +394,10 @@ defmodule Paxos do
   defp paxos_prepared(state, instance_number, %{
     process: process_name,
     accepted: process_last_accepted,
-    ballot: ballot_number
+    ballot: ballot_ref
   }) do
     # Check if the ballot is one we've registered as one we're leading.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
 
       # Add the process that has indicated prepared to the quorum map.
       ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :prepared)}
@@ -410,12 +417,12 @@ defmodule Paxos do
       end
 
       # Update the changes to ballot within state, before continuing.
-      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_ref}, ballot)}
 
       # If quorum reached, broadcast accept (otherwise do nothing).
       if upon_quorum_for(
         :prepared,
-        state.ballots[{instance_number, ballot_number}].quorum,
+        state.ballots[{instance_number, ballot_ref}].quorum,
         state.participants
       ) do
         BestEffortBroadcast.broadcast(
@@ -426,7 +433,7 @@ defmodule Paxos do
 
             # -- Data
             # We indicate the decided ballot value for the given ballot number.
-            %{ballot: ballot_number, value: ballot.value},
+            %{ballot: ballot_ref, value: ballot.value},
 
             # -- Additional Options
             # Send replies to :accept to the Paxos delegate - not the client.
@@ -441,7 +448,7 @@ defmodule Paxos do
         # This response is returned for future use, but currently will just be
         # thrown away. This is fine, we can safely disregard them - it's likely
         # that we aborted the ballot and other processes are catching up.
-        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{inspect ballot_ref}, could not be found. This process probably isn't the leader for this instance."}
         state
     end
 
@@ -451,7 +458,7 @@ defmodule Paxos do
   defp paxos_accept(state, instance_number, reply_to, %{
     ballot: ballot, value: value
   }) do
-    if ballot >= state.current_ballot[instance_number] do
+    if compare_ballot_ref(ballot, &>=/2, state.current_ballot[instance_number]) do
 
       if state.should_accept == nil or state.should_accept.(value) do
         # Mark the ballot as accepted and update the current ballot number to
@@ -481,27 +488,27 @@ defmodule Paxos do
     end
   end
 
-  defp paxos_accepted(state, instance_number, %{process: process_name, ballot: ballot_number}) do
+  defp paxos_accepted(state, instance_number, %{process: process_name, ballot: ballot_ref}) do
     # Check if the ballot is one we've registered as one we're leading.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
 
       # Add the process that has indicated accepted to the quorum map.
       ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :accepted)}
 
       # Update the changes to ballot within state, before continuing.
-      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_ref}, ballot)}
 
       if upon_quorum_for(
         :accepted,
-        state.ballots[{instance_number, ballot_number}].quorum,
+        state.ballots[{instance_number, ballot_ref}].quorum,
         state.participants
       ) do
         # We've reached a quorum of :accepted! Yay! Consensus achieved.
-        @loggerModule.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_number, value: ballot.value]])
+        @loggerModule.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_ref, value: ballot.value]])
 
         # Delete the ballot from state. It's no longer needed.
         state = %{state
-          | ballots: Map.delete(state.ballots, {instance_number, ballot_number})
+          | ballots: Map.delete(state.ballots, {instance_number, ballot_ref})
         }
 
         # Return decision by replying to the client's propose message.
@@ -526,20 +533,20 @@ defmodule Paxos do
         # This response is returned for future use, but currently will just be
         # thrown away. This is fine, we can safely disregard them - it's likely
         # that we aborted the ballot and other processes are catching up.
-        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{inspect ballot_ref}, could not be found. This process probably isn't the leader for this instance."}
         state
     end
 
     %{result: :skip_reply, state: state}
   end
 
-  defp paxos_nack(state, instance_number, %{ballot: ballot_number}) do
+  defp paxos_nack(state, instance_number, %{ballot: ballot_ref}) do
     # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
       # Update the state to show the status of this ballot.
       state = %{state |
-        ballots: Map.delete(state.ballots, {instance_number, ballot_number})
+        ballots: Map.delete(state.ballots, {instance_number, ballot_ref})
       }
 
       # Return abort by replying to the client's propose message.
@@ -925,17 +932,50 @@ defmodule Paxos do
     end
   end
 
+  # Compare to values lexicographically. This implementation could change to
+  # some custom implementation, but for now this just works with the built-in
+  # comparison operators for atoms.
+  defp lexicographical_compare(a, b),
+    do: (if a == b, do: 0, else: (if a > b, do: 1, else: -1))
+
+  # Converts two values to a ballot ref. Here, a tuple is simply generated, but
+  # this could be altered transparently to some other means of generating a
+  # unique ballot ref by modifying this function.
+  defp to_ballot_ref(process_name, ballot_index), do: {process_name, ballot_index}
+  defp ballot_ref_to_index(ballot_ref), do: elem(ballot_ref, 1)
+
+  # This function is the underlying one used to compare two ballot IDs. It
+  # performs an ordered comparison of the ballot index, followed by the the
+  # process name as a tie-breaker.
+  defp ballot_ref_compare(a, b) do
+    diff = elem(a, 1) - elem(b, 1)
+    if diff == 0, do: lexicographical_compare(elem(a, 0), elem(b, 0)), else: diff
+  end
+
+  # Increments the specified ballot reference by incrementing the ballot
+  # number. Additionally, the process name component is overwritten if a new
+  # one is specified.
+  defp increment_ballot_ref(ballot_ref, process_name \\ nil) do
+    {
+      (if process_name != nil, do: process_name, else: elem(ballot_ref, 0)),
+      ballot_ref_to_index(ballot_ref) + 1
+    }
+  end
+
+  # Compares two ballot ref values using ballot_ref_compare and turns the
+  # result into a boolean using the specified operator.
+  defp compare_ballot_ref(left, operator, right),
+    do: operator.(ballot_ref_compare(left, right), 0)
+
   # Checks if, for a given status, there is a quorum out of the total
   # processes.
   #
   # status = the status atom to check if a quorum of processes has arrived at,
   #          e.g., :prepared or :accepted
-  # quorum_state = state.ballots[{instance_number, ballot_number}].quorum
+  # quorum_state = state.ballots[{instance_number, ballot_ref}].quorum
   # all_participants = state.participants
   defp upon_quorum_for(status, quorum_state, all_participants) do
     # number_of_elements >= div(total, 2) + 1
-
-    IO.puts(inspect quorum_state)
 
     # Count the number of elements whose value matches the status.
     number_of_elements =

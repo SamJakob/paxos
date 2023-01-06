@@ -6,7 +6,8 @@ defmodule Paxos.LoggerShim do
   for the Paxos implementation.
   """
 
-  @printableLogLevels true
+  # Only print error messages.
+  @printableLogLevels ["ERROR"]
 
   defp write_log(level, message, device \\ :stdio) do
     if not is_list(@printableLogLevels) or Enum.member?(@printableLogLevels, level) do

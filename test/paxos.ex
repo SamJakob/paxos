@@ -1515,7 +1515,7 @@ defmodule Paxos do
     # means accept whatever the current proposal is (hence the previously
     # accepted ballot value, here, is nil by default.)
     field :accepted,
-      # instance_number => {ballot_number, ballot_value}
+      # instance_number => {ballot_ref, ballot_value}
       %{required(integer()) => {integer(), any()}},
       default: %{}
 
@@ -1526,7 +1526,7 @@ defmodule Paxos do
     # anticipated that any given process will only handle one ballot at once.
     # (i.e., if this process is the leader.)
     field :ballots,
-      # {instance_number, ballot_number} => ...
+      # {instance_number, ballot_ref} => ...
       %{required({integer(), integer()}) => %{
         :proposer => pid(),
         :value => any(),
@@ -1863,10 +1863,10 @@ defmodule Paxos do
   defp paxos_prepared(state, instance_number, %{
     process: process_name,
     accepted: process_last_accepted,
-    ballot: ballot_number
+    ballot: ballot_ref
   }) do
     # Check if the ballot is one we've registered as one we're leading.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
 
       # Add the process that has indicated prepared to the quorum map.
       ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :prepared)}
@@ -1886,12 +1886,12 @@ defmodule Paxos do
       end
 
       # Update the changes to ballot within state, before continuing.
-      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_ref}, ballot)}
 
       # If quorum reached, broadcast accept (otherwise do nothing).
       if upon_quorum_for(
         :prepared,
-        state.ballots[{instance_number, ballot_number}].quorum,
+        state.ballots[{instance_number, ballot_ref}].quorum,
         state.participants
       ) do
         BestEffortBroadcast.broadcast(
@@ -1902,7 +1902,7 @@ defmodule Paxos do
 
             # -- Data
             # We indicate the decided ballot value for the given ballot number.
-            %{ballot: ballot_number, value: ballot.value},
+            %{ballot: ballot_ref, value: ballot.value},
 
             # -- Additional Options
             # Send replies to :accept to the Paxos delegate - not the client.
@@ -1917,7 +1917,7 @@ defmodule Paxos do
         # This response is returned for future use, but currently will just be
         # thrown away. This is fine, we can safely disregard them - it's likely
         # that we aborted the ballot and other processes are catching up.
-        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_ref}, could not be found. This process probably isn't the leader for this instance."}
         state
     end
 
@@ -1955,27 +1955,27 @@ defmodule Paxos do
     end
   end
 
-  defp paxos_accepted(state, instance_number, %{process: process_name, ballot: ballot_number}) do
+  defp paxos_accepted(state, instance_number, %{process: process_name, ballot: ballot_ref}) do
     # Check if the ballot is one we've registered as one we're leading.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
 
       # Add the process that has indicated accepted to the quorum map.
       ballot = %{ballot | quorum: Map.put(ballot.quorum, process_name, :accepted)}
 
       # Update the changes to ballot within state, before continuing.
-      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_number}, ballot)}
+      state = %{state | ballots: Map.put(state.ballots, {instance_number, ballot_ref}, ballot)}
 
       if upon_quorum_for(
         :accepted,
-        state.ballots[{instance_number, ballot_number}].quorum,
+        state.ballots[{instance_number, ballot_ref}].quorum,
         state.participants
       ) do
         # We've reached a quorum of :accepted! Yay! Consensus achieved.
-        @loggerModule.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_number, value: ballot.value]])
+        @loggerModule.notice("Successfully achieved consensus", [data: [leader: state.name, instance: instance_number, ballot: ballot_ref, value: ballot.value]])
 
         # Delete the ballot from state. It's no longer needed.
         state = %{state
-          | ballots: Map.delete(state.ballots, {instance_number, ballot_number})
+          | ballots: Map.delete(state.ballots, {instance_number, ballot_ref})
         }
 
         # Return decision by replying to the client's propose message.
@@ -2000,20 +2000,20 @@ defmodule Paxos do
         # This response is returned for future use, but currently will just be
         # thrown away. This is fine, we can safely disregard them - it's likely
         # that we aborted the ballot and other processes are catching up.
-        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_number}, could not be found. This process probably isn't the leader for this instance."}
+        {:error, "The requested proposal, instance #{instance_number}, ballot #{ballot_ref}, could not be found. This process probably isn't the leader for this instance."}
         state
     end
 
     %{result: :skip_reply, state: state}
   end
 
-  defp paxos_nack(state, instance_number, %{ballot: ballot_number}) do
+  defp paxos_nack(state, instance_number, %{ballot: ballot_ref}) do
     # If the instance_number is in the list of ballots we're currently
     # processing, then remove it and abort.
-    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_number}) do
+    state = with ballot when ballot != nil <- Map.get(state.ballots, {instance_number, ballot_ref}) do
       # Update the state to show the status of this ballot.
       state = %{state |
-        ballots: Map.delete(state.ballots, {instance_number, ballot_number})
+        ballots: Map.delete(state.ballots, {instance_number, ballot_ref})
       }
 
       # Return abort by replying to the client's propose message.
@@ -2404,7 +2404,7 @@ defmodule Paxos do
   #
   # status = the status atom to check if a quorum of processes has arrived at,
   #          e.g., :prepared or :accepted
-  # quorum_state = state.ballots[{instance_number, ballot_number}].quorum
+  # quorum_state = state.ballots[{instance_number, ballot_ref}].quorum
   # all_participants = state.participants
   defp upon_quorum_for(status, quorum_state, all_participants) do
     # number_of_elements >= div(total, 2) + 1
