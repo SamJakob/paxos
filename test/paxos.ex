@@ -1,5 +1,5 @@
 # paxos.ex
-# Generated on Jan. 05, 2023 at 08:23:41 PM
+# Generated on Jan. 05, 2023 at 10:52:44 PM
 
 ###########
 # Type: Mix Dependency (typed_struct)
@@ -1490,9 +1490,9 @@ defmodule Paxos do
   use TypedStruct
 
   # Logger module configuration.
-  @loggerModule Paxos.LoggerShim
-  require Paxos.LoggerShim
-#  require Logger
+  @loggerModule Logger
+#  require Paxos.LoggerShim
+  require Logger
 
   # Paxos sub-modules.
   require Paxos.Message

@@ -12,8 +12,8 @@ cp dist/paxos.ex test/paxos.ex
 
 echo "Starting tests..."
 clean_beam_files
-#bash -c "cd test/; iex test_script.exs > /dev/null" || :
 
+#bash -c "cd test/; iex test_script.exs > /dev/null" || :
 bash -c "cd test/; iex test_script.exs" || :
 
 echo "Cleaning up..."

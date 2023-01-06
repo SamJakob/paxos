@@ -20,7 +20,7 @@ Requires Elixir >= 1.13 and OTP >= 23.
 ### Using the original test files
 To support using `Mix` to compile the project, the test files were slightly
 modified, to perform these changes, please do the following:
-1. Update `test_harness.ex` to include files compiled by Mix.
+1. Update `test_with_mix/test_harness.ex` to include files compiled by Mix.
     1. Modify line 54, to include ` -S mix` at the end.
     2. The line should now appear as follows:
     ```elixir
@@ -37,9 +37,9 @@ modified, to perform these changes, please do the following:
     # IEx.Helpers.c "paxos.ex", "."
     
     # Do not modify the following ##########
-    IEx.Helpers.c "test/test_harness.ex", "."
-    IEx.Helpers.c "test/paxos_test.ex", "."
-    IEx.Helpers.c "test/test_util.ex", "."
+    IEx.Helpers.c "test_with_mix/test_harness.ex", "."
+    IEx.Helpers.c "test_with_mix/paxos_test.ex", "."
+    IEx.Helpers.c "test_with_mix/test_util.ex", "."
     # IEx.Helpers.c "uuid.ex", "."
    ```
 

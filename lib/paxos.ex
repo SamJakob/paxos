@@ -9,9 +9,9 @@ defmodule Paxos do
   use TypedStruct
 
   # Logger module configuration.
-  @loggerModule Paxos.LoggerShim
-  require Paxos.LoggerShim
-#  require Logger
+  @loggerModule Logger
+#  require Paxos.LoggerShim
+  require Logger
 
   # Paxos sub-modules.
   require Paxos.Message
@@ -69,6 +69,10 @@ defmodule Paxos do
 
     # Used to store encryption keys for RPC calls.
     field :keys, %{required(String.t()) => any()}, default: %{}
+
+    # Used to optionally hold a callback that will determine whether a ballot
+    # is accepted by an acceptor.
+    field :should_accept, (any() -> true | false) | nil, default: nil
   end
 
   # ---------------------------------------------------------------------------
@@ -78,7 +82,7 @@ defmodule Paxos do
   alias provided to refer to the **Paxos implementation**.
   The list of participants for Paxos, is (naturally) specified by participants.
   """
-  def start(name, participants) do
+  def start(name, participants, acceptance_fun \\ nil) do
     if not Enum.member?(participants, name) do
       @loggerModule.error("The Paxos process is not in its own participants list.", [data: [process: name, participants: participants]])
       nil
@@ -86,7 +90,7 @@ defmodule Paxos do
       # Spawn a process, call Paxos.init with the specified parameters.
       pid = spawn(
         Paxos, :init,
-        [name, participants, self()]
+        [name, participants, self(), acceptance_fun]
       )
 
       # Register the specified name, (or re-register if it already exists).
@@ -147,7 +151,7 @@ defmodule Paxos do
   structures, starting an underlying BestEffortBroadcast instance for that
   process and then starting a run-state loop to handle incoming Paxos requests.
   """
-  def init(name, participants, spawner) do
+  def init(name, participants, spawner, acceptance_fun \\ nil) do
     # Wait for the spawning process to signal that this one can be booted
     # (i.e., that everything has been registered.)
     @loggerModule.info("Waiting for initialize signal...")
@@ -178,7 +182,8 @@ defmodule Paxos do
       # Initialize the state and begin the run-state loop.
       state = %Paxos{
         name: name,
-        participants: participants
+        participants: participants,
+        should_accept: acceptance_fun
       }
 
       @loggerModule.notice("Ready! Listening as #{name} (#{inspect(self())}).")
@@ -448,23 +453,25 @@ defmodule Paxos do
   }) do
     if ballot >= state.current_ballot[instance_number] do
 
-      # Mark the ballot as accepted and update the current ballot number to
-      # reflect the last ballot we've processed.
-      state = %{state |
-        current_ballot: Map.put(state.current_ballot, instance_number, ballot),
-        accepted: Map.put(state.accepted, instance_number, {ballot, value}),
-      }
+      if state.should_accept == nil or state.should_accept.(value) do
+        # Mark the ballot as accepted and update the current ballot number to
+        # reflect the last ballot we've processed.
+        state = %{state |
+          current_ballot: Map.put(state.current_ballot, instance_number, ballot),
+          accepted: Map.put(state.accepted, instance_number, {ballot, value}),
+        }
 
-      # Now send :accepted to indicate we've done so.
-      send(reply_to, Paxos.Message.pack(:accepted, %{
-        process: state.name,
-        ballot: ballot
-      }))
+        # Now send :accepted to indicate we've done so.
+        send(reply_to, Paxos.Message.pack(:accepted, %{
+          process: state.name,
+          ballot: ballot
+        }))
 
-      %{
-        result: :skip_reply,
-        state: state
-      }
+        %{result: :skip_reply, state: state}
+      else
+        %{result: :skip_reply, state: state}
+      end
+
     else
       # If we've already processed this ballot, or a ballot after this one, we
       # must not accept it and instead indicate that we've rejected it (i.e.,

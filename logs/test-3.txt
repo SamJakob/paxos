@@ -1,0 +1,342 @@
+❯ ./build_and_test.sh
+Building paxos.ex...
+Adding dependency typed_struct
+Adding dependency uuid
+Adding Paxos project code
+Postprocessing file...
+Starting tests...
+warning: use Bitwise is deprecated. import Bitwise instead
+  paxos.ex:481: UUID
+
+============
+"No failures, no concurrent ballots, 3 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, no concurrent ballots, 3 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, no concurrent ballots, 5 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, 2 concurrent ballots, 3 nodes", 10 times
+============
+FAIL
+	[{:p1, #PID<18666.115.0>, :none, :none, 10, {:message_queue_len, 0}}, {:p2, #PID<18667.115.0>, :none, :none, 10, {:message_queue_len, 0}}, {:p3, #PID<18668.120.0>, :none, :none, 10, {:message_queue_len, 0}}]
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, 2 concurrent ballots, 3 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, 2 concurrent instances, 3 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, many concurrent ballots 1, 5 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+FAIL
+	[{:p3, #PID<18671.125.0>, :none, :none, 10, {:message_queue_len, 0}}, {:p5, #PID<18673.130.0>, :none, :none, 10, {:message_queue_len, 0}}, {:p1, #PID<18669.125.0>, :decide, {:val, 207}, 10, {:message_queue_len, 0}}, {:p2, #PID<18670.125.0>, :none, :none, 10, {:message_queue_len, 0}}, {:p4, #PID<18672.125.0>, :none, :none, 10, {:message_queue_len, 0}}]
+PASS
+PASS
+============
+
+============
+"No failures, many concurrent ballots 1, 5 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, many concurrent ballots 2, 5 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"No failures, many concurrent ballots 2, 5 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"One non-leader crashes, no concurrent ballots, 3 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"One non-leader crashes, no concurrent ballots, 3 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Minority non-leader crashes, no concurrent ballots", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Minority non-leader crashes, no concurrent ballots", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Leader crashes, no concurrent ballots, 5 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Leader crashes, no concurrent ballots, 5 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Leader and some non-leaders crash, no concurrent ballots, 7 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Leader and some non-leaders crash, no concurrent ballots, 7 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Cascading failures of leaders and non-leaders, 11 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Cascading failures of leaders and non-leaders, 11 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Cascading failures of leaders and non-leaders, random delays, 7 nodes", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+
+============
+"Cascading failures of leaders and non-leaders, random delays, 7 local procs", 10 times
+============
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+PASS
+============
+Cleaning up...
