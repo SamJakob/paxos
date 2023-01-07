@@ -1,4 +1,4 @@
-defmodule BestEffortBroadcast do
+defmodule Paxos.BestEffortBroadcast do
   @moduledoc """
   A Best-Effort broadcast implementation.
   This is based on the version provided for the formative coursework with
@@ -12,8 +12,8 @@ defmodule BestEffortBroadcast do
   """
 
   # State for the current module.
-  # This is a struct that may be initialized with either the name of the
-  # current module, i.e., %BestEffortBroadcast{}, or for more flexibility, the
+  # This is a struct that may be initialized with either the name of the current
+  # module, i.e., %Paxos.BestEffortBroadcast{}, or for more flexibility, the
   # __MODULE__ compilation environment macro may be used, i.e., %__MODULE__{}.
 
   @enforce_keys [:client, :failed, :broadcast_type]
@@ -54,7 +54,7 @@ defmodule BestEffortBroadcast do
   calling process.
 
   Example usage:
-  BestEffortBroadcast.broadcast([:p1, :p2], {:hello, "world"})
+  Paxos.BestEffortBroadcast.broadcast([:p1, :p2], {:hello, "world"})
   """
   def broadcast(targets, message) do
     case Process.get("#{__MODULE__}/default_beb_delegate") do
@@ -68,7 +68,7 @@ defmodule BestEffortBroadcast do
   instead of retrieved from the process dictionary.
 
   Example usage:
-  BestEffortBroadcast.broadcast(pid, [:p1, :p2], {:hello, "world"})
+  Paxos.BestEffortBroadcast.broadcast(pid, [:p1, :p2], {:hello, "world"})
   """
   def broadcast(delegate, targets, message) do
     send(delegate, {__MODULE__, :broadcast, targets, message})

@@ -14,6 +14,7 @@ defmodule Paxos do
 #  require Logger
 
   # Paxos sub-modules.
+  require Paxos.BestEffortBroadcast
   require Paxos.Message
   require Paxos.Crypto
 
@@ -177,7 +178,7 @@ defmodule Paxos do
     if can_continue == :yes do
       # Now we can begin to initialize and boot this process.
       # Initialize BestEffortBroadcast for this process.
-      BestEffortBroadcast.start()
+      Paxos.BestEffortBroadcast.start()
 
       # Initialize the state and begin the run-state loop.
       state = %Paxos{
@@ -306,7 +307,7 @@ defmodule Paxos do
       state.name
     )
 
-    BestEffortBroadcast.broadcast(
+    Paxos.BestEffortBroadcast.broadcast(
       state.participants,
       Paxos.Message.pack(
         # -- Command
@@ -425,7 +426,7 @@ defmodule Paxos do
         state.ballots[{instance_number, ballot_ref}].quorum,
         state.participants
       ) do
-        BestEffortBroadcast.broadcast(
+        Paxos.BestEffortBroadcast.broadcast(
           state.participants,
           Paxos.Message.pack(
             # -- Command
@@ -941,7 +942,9 @@ defmodule Paxos do
   # Converts two values to a ballot ref. Here, a tuple is simply generated, but
   # this could be altered transparently to some other means of generating a
   # unique ballot ref by modifying this function.
-  defp to_ballot_ref(process_name, ballot_index), do: {process_name, ballot_index}
+  # defp to_ballot_ref(process_name, ballot_index), do: {process_name, ballot_index}
+
+  # Converts a ballot reference to the raw ballot index.
   defp ballot_ref_to_index(ballot_ref), do: elem(ballot_ref, 1)
 
   # This function is the underlying one used to compare two ballot IDs. It
@@ -953,11 +956,13 @@ defmodule Paxos do
   end
 
   # Increments the specified ballot reference by incrementing the ballot
-  # number. Additionally, the process name component is overwritten if a new
-  # one is specified.
-  defp increment_ballot_ref(ballot_ref, process_name \\ nil) do
+  # number. Additionally, the process name component is overwritten. This
+  # could later be updated, if necessary, so the process_name is maintained
+  # if process_name is not specified.
+  defp increment_ballot_ref(ballot_ref, process_name) do
     {
-      (if process_name != nil, do: process_name, else: elem(ballot_ref, 0)),
+#      (if process_name != nil, do: process_name, else: elem(ballot_ref, 0)),
+      process_name,
       ballot_ref_to_index(ballot_ref) + 1
     }
   end
