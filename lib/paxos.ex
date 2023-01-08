@@ -319,25 +319,39 @@ defmodule Paxos do
   defp paxos_change_participants(state, reply_to, {participants, cookie}, metadata) do
     instance_number = -1
 
-    {result, state} = if state.cookie == nil or cookie != state.cookie do
-      if state.cookie == nil, do: {:invalid_operation, state}, else: {:cookie_mismatch, state}
-    else
-      {{:ok, {participants}}, %{state | participants: participants}}
-    end
+    if not Enum.member?(participants, state.name) do
+      @loggerModule.error("The Paxos process is not in its own participants list.", [data: [process: state.name, participants: participants]])
 
-    # Send the reply back to the client.
-    send(
-      reply_to,
       Paxos.Message.pack_encrypted(
         metadata.rpc_id,
-        :change_participants, result, %{
+        :change_participants, {:error, "The Paxos process is not in its own participants list."}, %{
           key: state.keys[metadata.key],
           challenge: metadata.challenge
         }
       )
-    )
 
-    %{result: :skip_reply, state: state}
+      %{result: :skip_reply, state: state}
+    else
+      {result, state} = if state.cookie == nil or cookie != state.cookie do
+        if state.cookie == nil, do: {:invalid_operation, state}, else: {:cookie_mismatch, state}
+      else
+        {{:ok, {participants}}, %{state | participants: participants}}
+      end
+
+      # Send the reply back to the client.
+      send(
+        reply_to,
+        Paxos.Message.pack_encrypted(
+          metadata.rpc_id,
+          :change_participants, result, %{
+            key: state.keys[metadata.key],
+            challenge: metadata.challenge
+          }
+        )
+      )
+
+      %{result: :skip_reply, state: state}
+    end
   end
 
   # Paxos.propose - Step 1 - Leader -> All Processes
