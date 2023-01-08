@@ -74,6 +74,10 @@ defmodule Paxos do
     # Used to optionally hold a callback that will determine whether a ballot
     # is accepted by an acceptor.
     field :should_accept, (any() -> true | false) | nil, default: nil
+
+    # Used to store a cookie that must be provided to control the Paxos instance,
+    # if specified.
+    field :cookie, any()
   end
 
   # ---------------------------------------------------------------------------
@@ -83,7 +87,7 @@ defmodule Paxos do
   alias provided to refer to the **Paxos implementation**.
   The list of participants for Paxos, is (naturally) specified by participants.
   """
-  def start(name, participants, acceptance_fun \\ nil) do
+  def start(name, participants, acceptance_fun \\ nil, cookie \\ nil) do
     if not Enum.member?(participants, name) do
       @loggerModule.error("The Paxos process is not in its own participants list.", [data: [process: name, participants: participants]])
       nil
@@ -91,7 +95,7 @@ defmodule Paxos do
       # Spawn a process, call Paxos.init with the specified parameters.
       pid = spawn(
         Paxos, :init,
-        [name, participants, self(), acceptance_fun]
+        [name, participants, self(), acceptance_fun, cookie]
       )
 
       # Register the specified name, (or re-register if it already exists).
@@ -152,7 +156,7 @@ defmodule Paxos do
   structures, starting an underlying BestEffortBroadcast instance for that
   process and then starting a run-state loop to handle incoming Paxos requests.
   """
-  def init(name, participants, spawner, acceptance_fun \\ nil) do
+  def init(name, participants, spawner, acceptance_fun \\ nil, cookie \\ nil) do
     # Wait for the spawning process to signal that this one can be booted
     # (i.e., that everything has been registered.)
     @loggerModule.info("Waiting for initialize signal...")
@@ -184,13 +188,33 @@ defmodule Paxos do
       state = %Paxos{
         name: name,
         participants: participants,
-        should_accept: acceptance_fun
+        should_accept: acceptance_fun,
+        cookie: cookie
       }
 
       @loggerModule.notice("Ready! Listening as #{name} (#{inspect(self())}).")
       send(spawner, :raw_signal_startup_complete)
       run(state)
     end
+  end
+
+  @doc """
+  Submits a request to dynamically change the participants for Paxos for this
+  Paxos instance.
+
+  To maintain the integrity of the network, this operation may only be performed
+  if a cookie is set. Naturally, the cookie supplied here must match the cookie
+  supplied to the process on initialization.
+  """
+  def change_participants(delegate, cookie, participants, timeout) do
+    instance_number = -1
+
+    rpc_paxos(
+      delegate,
+      Paxos.Message.pack(:change_participants, {participants, cookie}, %{reply_to: self()}),
+      timeout,
+      {:timeout}
+    )
   end
 
   @doc """
@@ -291,6 +315,30 @@ defmodule Paxos do
   # -----------------------
 
   # ---------------------------------------------------------------------------
+
+  defp paxos_change_participants(state, reply_to, {participants, cookie}, metadata) do
+    instance_number = -1
+
+    {result, state} = if state.cookie == nil or cookie != state.cookie do
+      if state.cookie == nil, do: {:invalid_operation, state}, else: {:cookie_mismatch, state}
+    else
+      {{:ok, {participants}}, %{state | participants: participants}}
+    end
+
+    # Send the reply back to the client.
+    send(
+      reply_to,
+      Paxos.Message.pack_encrypted(
+        metadata.rpc_id,
+        :change_participants, result, %{
+          key: state.keys[metadata.key],
+          challenge: metadata.challenge
+        }
+      )
+    )
+
+    %{result: :skip_reply, state: state}
+  end
 
   # Paxos.propose - Step 1 - Leader -> All Processes
   # Create a new ballot, b.
@@ -672,6 +720,7 @@ defmodule Paxos do
           # Paxos.propose/4 or Paxos.get_decision/3, etc.,
           :propose -> paxos_propose(state, instance_number, reply_to, payload, metadata)
           :get_decision -> paxos_get_decision(state, instance_number, reply_to, payload, metadata)
+          :change_participants -> paxos_change_participants(state, reply_to, payload, metadata)
 
           # Broadcast Commands (generally broadcasted)
           # ------------------------------------------
