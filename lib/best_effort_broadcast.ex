@@ -40,7 +40,7 @@ defmodule Paxos.BestEffortBroadcast do
   Returns the PID of the delegate process.
   """
   def start do
-    delegate = spawn(__MODULE__, :run, [%__MODULE__{
+    delegate = spawn(__MODULE__, :init, [%__MODULE__{
       client: self(),
       failed: false,
       broadcast_type: :nominal,
@@ -73,6 +73,14 @@ defmodule Paxos.BestEffortBroadcast do
   """
   def broadcast(delegate, targets, message) do
     send(delegate, {__MODULE__, :broadcast, targets, message})
+  end
+
+  def init(initial_state) do
+    # Link to the parent process.
+    Process.link(initial_state.client)
+
+    # Begin calling into the run-state loop.
+    run(initial_state)
   end
 
   # The run-state loop. This will execute circularly with tail-end recursion to

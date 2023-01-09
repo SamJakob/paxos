@@ -182,7 +182,7 @@ defmodule Paxos do
     if can_continue == :yes do
       # Now we can begin to initialize and boot this process.
       # Initialize BestEffortBroadcast for this process.
-      Process.link(Paxos.BestEffortBroadcast.start())
+      Paxos.BestEffortBroadcast.start()
 
       # Initialize the state and begin the run-state loop.
       state = %Paxos{
