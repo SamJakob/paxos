@@ -73,10 +73,10 @@ by adding `paxos` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:paxos, "~> 0.2.0"},
+    {:paxos, "~> 0.2.3"},
     
     # or
-    {:paxos, git: "https://github.com/SamJakob/paxos", tag: "v0.2.0"},
+    {:paxos, git: "https://github.com/SamJakob/paxos", tag: "v0.2.3"},
   ]
 end
 ```
