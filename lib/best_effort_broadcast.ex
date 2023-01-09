@@ -47,6 +47,7 @@ defmodule Paxos.BestEffortBroadcast do
     }])
 
     Process.put("#{__MODULE__}/default_beb_delegate", delegate)
+    delegate
   end
 
   @doc """
