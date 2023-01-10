@@ -523,7 +523,7 @@ defmodule Paxos do
   }) do
     if compare_ballot_ref(ballot, &>=/2, state.current_ballot[instance_number]) do
 
-      if state.should_accept == nil or state.should_accept.(value) do
+      if state.should_accept == nil or state.should_accept.(value, instance_number) do
         # Mark the ballot as accepted and update the current ballot number to
         # reflect the last ballot we've processed.
         state = %{state |
